@@ -1,6 +1,6 @@
 {
   "name": "visualagents",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AgentView \u2014 Claude Code /agents \ud654\uba74 \ub370\uc2a4\ud06c\ud1b1 \uc571 (\ud55c\uae00\u00b7UI \uac1c\uc120)",
   "main": "out/main/index.js",
   "author": "VisualAgents",

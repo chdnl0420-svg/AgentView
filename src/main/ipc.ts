@@ -1,8 +1,9 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { EVT, IPC } from '@shared/ipc-contracts';
+import { checkUpdate, downloadAndInstall, revealReleasePage } from './updater';
 import { externalSessionState, isExternalSessionAlive, scanSessions } from './sessionScanner';
 import {
   sendKeyToBackgroundAgent,
