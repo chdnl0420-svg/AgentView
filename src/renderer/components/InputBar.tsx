@@ -9,7 +9,14 @@ import type {
 } from '@shared/types';
 import { shortCwd } from '../lib/format';
 import { appendAttachmentsToPrompt, basename, fileUrl, iconFor, isImage } from '../lib/attachments';
-import { loadHistory, loadJSON, pushHistory, saveJSON } from '../lib/persistence';
+import {
+  ENTER_TO_SEND_KEY,
+  draftKey,
+  loadHistory,
+  loadJSON,
+  pushHistory,
+  saveJSON
+} from '../lib/persistence';
 
 const MODELS = [
   { value: 'opus', label: 'opus' },
@@ -88,7 +95,24 @@ type InputBarProps = NewProps | ResumeProps;
 
 export function InputBar(props: InputBarProps) {
   const isNew = props.mode === 'new';
-  const [prompt, setPromptState] = useState(props.draft?.prompt ?? '');
+  // History key drives both the ArrowUp/Down history list AND the autosaved
+  // draft. We need it BEFORE the prompt/attachments useState so the initial
+  // value can come from persisted state when the parent didn't pass a draft.
+  const historyKey = props.historyKey ?? (isNew ? 'new' : `s.${(props as ResumeProps).sessionId}`);
+
+  // Initial draft resolution priority:
+  //   1. props.draft (parent-controlled)
+  //   2. persisted draft.<historyKey>
+  //   3. empty
+  // We do this lazily inside useState so it only runs once per mount.
+  const [prompt, setPromptState] = useState<string>(() => {
+    if (props.draft && typeof props.draft.prompt === 'string') return props.draft.prompt;
+    const persisted = loadJSON<{ prompt?: string; attachments?: string[] } | null>(
+      draftKey(historyKey),
+      null
+    );
+    return persisted && typeof persisted.prompt === 'string' ? persisted.prompt : '';
+  });
   const [cwd, setCwdState] = useState(
     isNew ? loadLastCwd(props.defaultCwd) : props.fixedCwd
   );
@@ -108,9 +132,14 @@ export function InputBar(props: InputBarProps) {
     if (!isNew && props.fixedModel) return props.fixedModel;
     return loadLastModel();
   });
-  const [attachments, setAttachmentsState] = useState<string[]>(
-    props.draft?.attachments ?? []
-  );
+  const [attachments, setAttachmentsState] = useState<string[]>(() => {
+    if (props.draft && Array.isArray(props.draft.attachments)) return props.draft.attachments;
+    const persisted = loadJSON<{ prompt?: string; attachments?: string[] } | null>(
+      draftKey(historyKey),
+      null
+    );
+    return persisted && Array.isArray(persisted.attachments) ? persisted.attachments : [];
+  });
   const [sending, setSending] = useState(false);
   const sendingLockRef = useRef(false);
   const [cancelling, setCancelling] = useState(false);
@@ -195,27 +224,32 @@ export function InputBar(props: InputBarProps) {
     return () => window.clearTimeout(id);
   }, [cancelling]);
 
-  // Wrap state setters so the parent always sees the latest draft.
+  // Wrap state setters so the parent always sees the latest draft AND we
+  // synchronously persist to localStorage under `draft.<historyKey>`. This
+  // means even if the app is killed (not gracefully closed), the user's
+  // half-typed message comes back next launch.
   const onDraftChange = props.onDraftChange;
   const setPrompt = useCallback(
     (val: React.SetStateAction<string>) => {
       setPromptState((prev) => {
         const next = typeof val === 'function' ? (val as (p: string) => string)(prev) : val;
         if (onDraftChange) onDraftChange({ prompt: next, attachments });
+        saveJSON(draftKey(historyKey), { prompt: next, attachments });
         return next;
       });
     },
-    [onDraftChange, attachments]
+    [onDraftChange, attachments, historyKey]
   );
   const setAttachments = useCallback(
     (val: React.SetStateAction<string[]>) => {
       setAttachmentsState((prev) => {
         const next = typeof val === 'function' ? (val as (p: string[]) => string[])(prev) : val;
         if (onDraftChange) onDraftChange({ prompt, attachments: next });
+        saveJSON(draftKey(historyKey), { prompt, attachments: next });
         return next;
       });
     },
-    [onDraftChange, prompt]
+    [onDraftChange, prompt, historyKey]
   );
   const [commands, setCommands] = useState<SlashCommandEntry[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
@@ -224,8 +258,9 @@ export function InputBar(props: InputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // History navigation (ArrowUp / ArrowDown). historyIdx === -1 means we're
-  // editing a fresh draft; >=0 means we're showing history[idx].
-  const historyKey = props.historyKey ?? (isNew ? 'new' : `s.${(props as ResumeProps).sessionId}`);
+  // editing a fresh draft; >=0 means we're showing history[idx]. The
+  // `historyKey` constant lives at the top of the component because the
+  // initial prompt/attachments state also depends on it.
   const [history, setHistory] = useState<string[]>(() => loadHistory(historyKey));
   const [historyIdx, setHistoryIdx] = useState(-1);
   const draftBeforeHistoryRef = useRef('');
@@ -235,6 +270,30 @@ export function InputBar(props: InputBarProps) {
     setHistory(loadHistory(historyKey));
     setHistoryIdx(-1);
   }, [historyKey]);
+
+  // "Enter to send" preference. Default off (Ctrl/Meta+Enter sends). We
+  // listen on `storage` (cross-tab/cross-window) AND a custom `opt:enterToSend`
+  // window event so a settings panel elsewhere can publish changes without
+  // forcing a full reload.
+  const [enterToSend, setEnterToSend] = useState<boolean>(() =>
+    loadJSON<boolean>(ENTER_TO_SEND_KEY, false)
+  );
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key && e.key.endsWith(ENTER_TO_SEND_KEY)) {
+        setEnterToSend(loadJSON<boolean>(ENTER_TO_SEND_KEY, false));
+      }
+    };
+    const onCustom = () => {
+      setEnterToSend(loadJSON<boolean>(ENTER_TO_SEND_KEY, false));
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('opt:enterToSend', onCustom as EventListener);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('opt:enterToSend', onCustom as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -352,18 +411,39 @@ export function InputBar(props: InputBarProps) {
     try {
       const finalPrompt = appendAttachmentsToPrompt(trimmed, attachments);
       if (isNew) {
+        // Worktree mode race guard (#23): wtEnabled loads synchronously from
+        // localStorage but branchInfo is fetched async. If the user hits
+        // send before the first branch fetch finishes we'd silently fall
+        // back to wtOn=false. Retry once (1s budget) before giving up.
+        let effectiveBranchInfo: GitBranchesResult | null = branchInfo;
+        if (wtEnabled && effectiveBranchInfo === null) {
+          try {
+            effectiveBranchInfo = await Promise.race([
+              window.av.git.branches(cwd || props.defaultCwd),
+              new Promise<GitBranchesResult>((resolve) =>
+                setTimeout(
+                  () => resolve({ isRepo: false, current: '', branches: [] }),
+                  1000
+                )
+              )
+            ]);
+            if (effectiveBranchInfo) setBranchInfo(effectiveBranchInfo);
+          } catch {
+            effectiveBranchInfo = { isRepo: false, current: '', branches: [] };
+          }
+        }
         // Worktree mode: enabled when the checkbox is on AND the cwd is a
         // git repo. Branch + path are derived automatically — current branch
         // as base, a fresh `<repo>-wt-agent-<n>` sibling path.
-        const wtOn = wtEnabled && !!branchInfo?.isRepo;
+        const wtOn = wtEnabled && !!effectiveBranchInfo?.isRepo;
         let worktreePath: string | null = null;
         let baseBranch: string | null = null;
         if (wtOn) {
           baseBranch =
-            (wtBaseBranch && branchInfo!.branches.includes(wtBaseBranch)
+            (wtBaseBranch && effectiveBranchInfo!.branches.includes(wtBaseBranch)
               ? wtBaseBranch
-              : branchInfo!.current) ||
-            branchInfo!.branches[0] ||
+              : effectiveBranchInfo!.current) ||
+            effectiveBranchInfo!.branches[0] ||
             'HEAD';
           try {
             worktreePath = await window.av.git.defaultWorktreePath(
@@ -410,6 +490,9 @@ export function InputBar(props: InputBarProps) {
       setAttachmentsState([]);
       setHistoryIdx(-1);
       if (onDraftChange) onDraftChange({ prompt: '', attachments: [] });
+      // Clear the autosaved draft so a restarted app doesn't restore
+      // text the user has already sent.
+      saveJSON(draftKey(historyKey), null);
       requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -676,22 +759,62 @@ export function InputBar(props: InputBarProps) {
       )}
 
       <div className="input-row">
-        <button
-          type="button"
-          className="btn add-attach"
-          onClick={addAttachments}
-          disabled={disabled}
-          title="파일 첨부"
-          aria-label="파일 첨부"
-        >
-          +
-        </button>
+        {/* Left column: small attachment button on top, mini history nav
+            below. Stacking these vertically frees horizontal space for the
+            textarea and matches the new compact composer layout. */}
+        <div className="input-left-col">
+          <button
+            type="button"
+            className="btn add-attach small"
+            onClick={addAttachments}
+            disabled={disabled}
+            title="파일 첨부"
+            aria-label="파일 첨부"
+          >
+            +
+          </button>
+          <div className="history-nav">
+            <button
+              type="button"
+              className="btn history-btn"
+              onClick={() => {
+                navigateHistoryUp();
+                requestAnimationFrame(() => textareaRef.current?.focus());
+              }}
+              disabled={disabled || history.length === 0}
+              title="메시지 히스토리 — 이전"
+              aria-label="이전 메시지 불러오기"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              className="btn history-btn"
+              onClick={() => {
+                navigateHistoryDown();
+                requestAnimationFrame(() => textareaRef.current?.focus());
+              }}
+              disabled={disabled || historyIdx < 0}
+              title="메시지 히스토리 — 다음"
+              aria-label="다음 메시지 불러오기"
+            >
+              ↓
+            </button>
+          </div>
+        </div>
         <textarea
           ref={textareaRef}
           className="input-box"
-          placeholder={props.placeholder ?? (isNew
-            ? '새 작업을 입력하세요 — Ctrl+Enter (또는 우측 ▶ 버튼) 로 백그라운드 에이전트가 시작됩니다.'
-            : '이 에이전트에 이어서 보낼 메시지 — Ctrl+Enter (또는 우측 ↗ 버튼) 로 전송됩니다.')}
+          placeholder={
+            props.placeholder ??
+            (isNew
+              ? `새 작업을 입력하세요 — ${
+                  enterToSend ? 'Enter' : 'Ctrl+Enter'
+                } 로 전송됩니다.`
+              : `이 에이전트에 이어서 보낼 메시지 — ${
+                  enterToSend ? 'Enter' : 'Ctrl+Enter'
+                } 로 전송됩니다.`)
+          }
           value={prompt}
           onChange={(e) => {
             setPrompt(e.target.value);
@@ -729,10 +852,24 @@ export function InputBar(props: InputBarProps) {
                 return;
               }
             }
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-              e.preventDefault();
-              send();
-              return;
+            // Enter handling.
+            //   enterToSend=true  → Enter sends, Shift+Enter newline.
+            //   enterToSend=false → Ctrl/Meta+Enter sends, bare Enter newline.
+            // Slash popup always wins (handled above) so command picking
+            // still works in both modes.
+            if (e.key === 'Enter') {
+              if (enterToSend) {
+                if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                  e.preventDefault();
+                  send();
+                  return;
+                }
+                // Shift+Enter falls through to default newline insertion.
+              } else if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                send();
+                return;
+              }
             }
             // History navigation. Only fire when the caret sits on the first
             // (ArrowUp) or last (ArrowDown) visual line of the textarea so we
@@ -741,7 +878,7 @@ export function InputBar(props: InputBarProps) {
               const ta = e.currentTarget;
               const pos = ta.selectionStart ?? 0;
               const onFirstLine = !ta.value.slice(0, pos).includes('\n');
-              if (onFirstLine) {
+              if (onFirstLine && history.length > 0) {
                 if (navigateHistoryUp()) {
                   e.preventDefault();
                 }
@@ -752,6 +889,9 @@ export function InputBar(props: InputBarProps) {
               const ta = e.currentTarget;
               const pos = ta.selectionEnd ?? ta.value.length;
               const onLastLine = !ta.value.slice(pos).includes('\n');
+              // historyIdx === -1 means we're already on the fresh draft;
+              // there is nothing newer to navigate to, so swallow nothing
+              // and let the default caret behavior run.
               if (onLastLine && historyIdx >= 0) {
                 e.preventDefault();
                 navigateHistoryDown();
@@ -793,12 +933,16 @@ export function InputBar(props: InputBarProps) {
             </button>
           ) : (
             <button className="btn primary" onClick={send} disabled={!canSend}>
-              {sending
-                ? '전송 중…'
-                : props.buttonLabel ?? (isNew ? '▶ 새 작업 시작' : '↗ 이어서 보내기')}
+              {sending ? '전송 중…' : props.buttonLabel ?? '전송'}
             </button>
           )}
-          <span className="hint">{showCancelButton ? '입력하면 전송으로 전환' : 'Ctrl+Enter · ↑↓ 히스토리'}</span>
+          <span className="hint">
+            {showCancelButton
+              ? '입력하면 전송으로 전환'
+              : enterToSend
+              ? 'Enter · Shift+Enter 줄바꿈'
+              : 'Ctrl+Enter · ↑↓ 히스토리'}
+          </span>
         </div>
       </div>
     </div>

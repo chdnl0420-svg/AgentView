@@ -1,15 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentInfo,
   BgSession,
   ConversationAppend,
   ConversationFile,
   ConversationMessage,
+  PermissionMode,
   RunningSessionInfo
 } from '@shared/types';
-import { formatBytes } from '../lib/format';
 import { renderMarkdown } from '../lib/markdown';
 import {
+  extractToolFilePath,
   isAskUserQuestionInput,
   parseAskUserQuestionResult,
   summarizeToolResult,
@@ -19,7 +20,6 @@ import { cleanUserMessage, isEmptyUserMessage, segmentBody, type Segment } from 
 import {
   appendAttachmentsToPrompt,
   basename,
-  extractAttachments,
   fileUrl,
   iconFor,
   isImage
@@ -27,6 +27,36 @@ import {
 import { formatRelative } from '../lib/format';
 import { InputBar, type InputDraft } from './InputBar';
 import { loadJSON, saveJSON } from '../lib/persistence';
+import { FilePreviewModal } from './FilePreviewModal';
+import { PathContextMenu } from './PathContextMenu';
+import { AskQuestionWizard } from './AskQuestionWizard';
+import { LinkifiedText } from './LinkifiedText';
+
+// Path click + context menu shared callbacks. Components below the bubbles
+// thread these down so a single FilePreviewModal / PathContextMenu instance
+// lives at the page root.
+interface PathHandlers {
+  onPathClick: (path: string) => void;
+  onPathContext: (path: string, x: number, y: number) => void;
+}
+const PathHandlersContext = React.createContext<PathHandlers | null>(null);
+function usePathHandlers(): PathHandlers | null {
+  return React.useContext(PathHandlersContext);
+}
+
+const PERMISSION_LABELS: Record<PermissionMode, string> = {
+  default: '기본',
+  acceptEdits: '편집 자동 승인',
+  bypassPermissions: '모든 권한 자동',
+  plan: '계획 모드'
+};
+const PERMISSION_ORDER: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+const MODEL_OPTIONS: Array<{ value: string | null; label: string }> = [
+  { value: null, label: '기본 (자동)' },
+  { value: 'sonnet', label: 'Sonnet' },
+  { value: 'opus', label: 'Opus' },
+  { value: 'haiku', label: 'Haiku' }
+];
 
 const RENAMES_KEY = 'sessionRenames';
 function loadRenames(): Record<string, string> {
@@ -76,10 +106,81 @@ export function SessionDetail({
   const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef<boolean>(true);
-  // Texts of optimistic messages still waiting to be confirmed by the live
-  // jsonl tail. Used to dedupe — when the real user-role text message
-  // arrives matching one of these, we drop the optimistic placeholder.
-  const optimisticTextsRef = useRef<Array<{ text: string; uuid: string }>>([]);
+
+  // ---- File preview modal + path context menu (page-level singletons) ----
+  const [preview, setPreview] = useState<{ path: string } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const onPathClick = useCallback((p: string) => setPreview({ path: p }), []);
+  const onPathContext = useCallback(
+    (p: string, x: number, y: number) => setCtxMenu({ x, y, path: p }),
+    []
+  );
+  const pathHandlers = useMemo<PathHandlers>(
+    () => ({ onPathClick, onPathContext }),
+    [onPathClick, onPathContext]
+  );
+
+  // ---- "Only my messages" filter (per-session, persisted) ----
+  const onlyMineKey = `view.onlyMine.${session.sessionId}`;
+  const [onlyMine, setOnlyMine] = useState<boolean>(() => loadJSON<boolean>(onlyMineKey, false));
+  useEffect(() => {
+    setOnlyMine(loadJSON<boolean>(onlyMineKey, false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.sessionId]);
+  const toggleOnlyMine = () => {
+    setOnlyMine((v) => {
+      const next = !v;
+      saveJSON(onlyMineKey, next);
+      return next;
+    });
+  };
+
+  // ---- Goal bar (workspace doc prompt OR meta.lastPrompt) + completed toggle ----
+  const goalDoneKey = `goal.done.${session.sessionId}`;
+  const [goalDone, setGoalDone] = useState<boolean>(() => loadJSON<boolean>(goalDoneKey, false));
+  const [workspacePrompt, setWorkspacePrompt] = useState<string | null>(null);
+  useEffect(() => {
+    setGoalDone(loadJSON<boolean>(goalDoneKey, false));
+    setWorkspacePrompt(null);
+    let cancelled = false;
+    window.av.workspace
+      .read(session.sessionId)
+      .then((md) => {
+        if (cancelled || !md) return;
+        const m = /```\n([\s\S]*?)\n```/.exec(md);
+        if (m) setWorkspacePrompt(m[1].trim().split(/\r?\n/)[0].slice(0, 240));
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.sessionId]);
+  const toggleGoalDone = () => {
+    setGoalDone((v) => {
+      const next = !v;
+      saveJSON(goalDoneKey, next);
+      return next;
+    });
+  };
+
+  // ---- Crash banner dismiss (resets per session) ----
+  const [crashDismissed, setCrashDismissed] = useState(false);
+  useEffect(() => {
+    setCrashDismissed(false);
+  }, [session.sessionId]);
+
+  // ---- Permission / Model dropdowns + ephemeral toast ----
+  const [permMenuOpen, setPermMenuOpen] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [miniToast, setMiniToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!miniToast) return;
+    const t = window.setTimeout(() => setMiniToast(null), 2200);
+    return () => window.clearTimeout(t);
+  }, [miniToast]);
+
+  // ---- Send race / idempotency guards ----
+  const sendingRef = useRef(false);
+  const lastSentRef = useRef<{ sig: string; at: number } | null>(null);
 
   // "Busy" purely tracks the agent's reported status. A live PTY that's just
   // sitting idle waiting for the next prompt is NOT busy — the card already
@@ -441,39 +542,13 @@ export function SessionDetail({
         const seen = new Set(prev.messages.map((m) => m.uuid));
         const additions = evt.newMessages.filter((m) => !seen.has(m.uuid));
         if (additions.length === 0) return { ...prev, sizeBytes: evt.sizeBytes };
-        // Drop any optimistic placeholders whose text now matches an
-        // incoming real user-role message — claude has confirmed it
-        // landed in the jsonl, so the placeholder is no longer needed.
-        const pending = optimisticTextsRef.current;
-        const toDrop = new Set<string>();
-        const normalize = (t: string): string =>
-          t.replace(/\[Attached files\][\s\S]*$/, '')
-            .replace(/<[^>]+>/g, '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .toLowerCase();
-        for (const add of additions) {
-          if (add.role !== 'user' || add.kind !== 'text') continue;
-          const addClean = cleanUserMessage(add.text || '').body.trim();
-          const addText = (add.text || '').trim();
-          const addNorm = normalize(addClean || addText);
-          if (!addNorm) continue;
-          const match = pending.find((p) => {
-            const pn = normalize(p.text);
-            if (!pn) return false;
-            return pn === addNorm || addNorm.startsWith(pn) || pn.startsWith(addNorm);
-          });
-          if (match) toDrop.add(match.uuid);
-        }
-        if (toDrop.size > 0) {
-          optimisticTextsRef.current = pending.filter((p) => !toDrop.has(p.uuid));
-        }
-        const cleaned = toDrop.size > 0
-          ? prev.messages.filter((m) => !toDrop.has(m.uuid))
-          : prev.messages;
+        // 1.0.5 — dropped the optimisticTextsRef dedupe layer. The optimistic
+        // refs were always empty (the placeholder path was removed earlier
+        // but the dedupe loop lingered), so this used to be dead code that
+        // also masked real in-flight user messages from rendering.
         return {
           ...prev,
-          messages: [...cleaned, ...additions],
+          messages: [...prev.messages, ...additions],
           sizeBytes: evt.sizeBytes
         };
       });
@@ -711,15 +786,7 @@ export function SessionDetail({
             >
               <ContextDonut percent={contextPct} />
             </button>
-            <span>PID {session.pid || '—'}</span>
-            <span>·</span>
             <span title={session.cwd}>{session.cwd}</span>
-            {data && (
-              <>
-                <span>·</span>
-                <span>{data.messages.length}개 메시지 · {formatBytes(data.sizeBytes)}</span>
-              </>
-            )}
           </div>
           {contextPanelOpen && (
             <>

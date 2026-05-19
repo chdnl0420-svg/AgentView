@@ -1,5 +1,20 @@
 const PREFIX = 'agentview.';
 
+/**
+ * localStorage key for the user's "Enter to send" preference. When true,
+ * a bare Enter sends the message and Shift+Enter inserts a newline. When
+ * false (default), Ctrl/Meta+Enter sends and Enter inserts a newline.
+ *
+ * Components that read this should also listen on `window` for the custom
+ * event of the same name to react when the setting changes elsewhere.
+ */
+export const ENTER_TO_SEND_KEY = 'opt.enterToSend';
+
+/** Build the localStorage key used by InputBar to autosave its draft. */
+export function draftKey(historyKey: string): string {
+  return `draft.${historyKey}`;
+}
+
 export function loadJSON<T>(key: string, fallback: T): T {
   try {
     const raw = window.localStorage.getItem(PREFIX + key);

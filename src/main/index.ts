@@ -2,8 +2,60 @@ import { app, BrowserWindow, Menu, protocol, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { registerIpc, shutdownIpc } from './ipc';
 import { refreshDesktopShortcut } from './desktopShortcut';
+
+// Renderer asks for autostart via IPC. We mirror it into a tiny JSON file
+// so the choice survives reinstall + the main process knows the desired
+// state at app startup before the renderer has loaded.
+const SETTINGS_PATH = join(homedir(), '.claude', 'agentview', 'app-settings.json');
+
+async function readSettings(): Promise<Record<string, unknown>> {
+  try {
+    const body = await fs.readFile(SETTINGS_PATH, 'utf8');
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function writeSettings(patch: Record<string, unknown>): Promise<void> {
+  const cur = await readSettings();
+  const next = { ...cur, ...patch };
+  await fs.mkdir(join(SETTINGS_PATH, '..'), { recursive: true });
+  await fs.writeFile(SETTINGS_PATH, JSON.stringify(next, null, 2), 'utf8');
+}
+
+async function syncAutostartFromSettings(): Promise<void> {
+  const s = await readSettings();
+  const openAtLogin = !!s.autostart;
+  try {
+    app.setLoginItemSettings({ openAtLogin, path: process.execPath });
+  } catch (err) {
+    console.error('[autostart] setLoginItemSettings failed', err);
+  }
+}
+
+export async function setAutostart(on: boolean): Promise<boolean> {
+  try {
+    app.setLoginItemSettings({ openAtLogin: on, path: process.execPath });
+    await writeSettings({ autostart: on });
+    return true;
+  } catch (err) {
+    console.error('[autostart] set failed', err);
+    return false;
+  }
+}
+
+export async function getAutostart(): Promise<boolean> {
+  try {
+    return !!app.getLoginItemSettings().openAtLogin;
+  } catch {
+    const s = await readSettings();
+    return !!s.autostart;
+  }
+}
 
 const MIME: Record<string, string> = {
   png: 'image/png',
@@ -64,6 +116,12 @@ function createWindow(): BrowserWindow {
     title: 'AgentView · Claude Code Background Agents',
     icon: resolveIconPath(),
     autoHideMenuBar: true,
+    // Frameless on Windows so our custom <WindowChrome /> bar can host
+    // both the options gear and the min/max/close buttons. titleBarOverlay
+    // would also work but doesn't let us put a button to the LEFT of the
+    // controls, which the user asked for.
+    frame: process.platform !== 'win32',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -71,6 +129,17 @@ function createWindow(): BrowserWindow {
       sandbox: false
     }
   });
+
+  // Tell the renderer about maximize/restore state so the chrome can swap
+  // the max/restore icon. Single event handler on the window.
+  const sendMaxState = () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('window:maximizedChanged', win.isMaximized());
+    }
+  };
+  win.on('maximize', sendMaxState);
+  win.on('unmaximize', sendMaxState);
+  win.on('restore', sendMaxState);
 
   win.once('ready-to-show', () => win.show());
 
@@ -145,6 +214,11 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   if (process.platform === 'win32') app.setAppUserModelId('com.visualagents.app');
+  // Honor the user's "Windows 시작 시 자동 실행" preference. We keep the
+  // canonical value in main-process memory and let the renderer set/get it
+  // via IPC. The default is "off"; once the user flips it on, Windows /
+  // macOS will auto-launch us at the next login until they flip it off.
+  syncAutostartFromSettings();
   // Serve local files for image previews / file links inside the renderer.
   protocol.handle('av-file', async (request) => {
     // We expect URLs of the form:

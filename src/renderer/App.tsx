@@ -11,7 +11,8 @@ import { SessionCard } from './components/SessionCard';
 import { SessionDetail, type QueuedPrompt } from './components/SessionDetail';
 import { InputBar, type InputDraft } from './components/InputBar';
 import { UpdateBanner } from './components/UpdateBanner';
-import { FirstRunTutorial } from './components/FirstRunTutorial';
+import { SpotlightTour } from './components/SpotlightTour';
+import { WindowChrome } from './components/WindowChrome';
 import { loadJSON, saveJSON } from './lib/persistence';
 
 const NEW_DRAFT_KEY = 'draft.new';
@@ -585,9 +586,10 @@ export default function App() {
   if (selected) {
     return (
       <>
+        <WindowChrome />
         <UpdateBanner />
         {claudeStatusBanner}
-        <FirstRunTutorial />
+        <SpotlightTour />
         <SessionDetail
           session={selected}
           agents={agents}
@@ -617,9 +619,10 @@ export default function App() {
 
   return (
     <div className="app no-chrome">
+      <WindowChrome />
       <UpdateBanner />
       {claudeStatusBanner}
-      <FirstRunTutorial />
+      <SpotlightTour />
       <div className="dashboard">
         <div
           className="grid-wrap"

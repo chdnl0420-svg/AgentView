@@ -20,19 +20,47 @@ export function summarizeToolUse(name: string, input: unknown): string {
     case 'PowerShell': {
       const cmd = typeof i.command === 'string' ? i.command : '';
       const desc = typeof i.description === 'string' ? i.description : '';
-      return desc ? `${desc} — ${truncate(cmd, 60)}` : truncate(cmd, 100);
+      // Task 17: "Bash: <command 첫 80자>" — desc remains primary when set.
+      if (desc) return `${desc} — ${truncate(cmd, 80)}`;
+      return truncate(cmd, 80);
     }
-    case 'Read':
-    case 'Edit':
-    case 'Write':
+    case 'Read': {
+      const fp = typeof i.file_path === 'string' ? i.file_path : '';
+      const off = typeof i.offset === 'number' ? (i.offset as number) : null;
+      const lim = typeof i.limit === 'number' ? (i.limit as number) : null;
+      if (off != null && lim != null) return `${fp}:${off}-${off + lim - 1}`;
+      if (off != null) return `${fp}:${off}+`;
+      return fp || '';
+    }
+    case 'Write': {
+      const fp = typeof i.file_path === 'string' ? i.file_path : '';
+      return fp || '';
+    }
+    case 'Edit': {
+      const fp = typeof i.file_path === 'string' ? i.file_path : '';
+      const replaceAll = (i.replace_all === true);
+      const edits = Array.isArray((i as { edits?: unknown[] }).edits)
+        ? ((i as { edits: unknown[] }).edits).length
+        : 0;
+      const suffix = edits > 1
+        ? ` (${edits} edits)`
+        : replaceAll
+          ? ' (replace all)'
+          : ' (replace 1)';
+      return `${fp}${suffix}`;
+    }
     case 'NotebookEdit': {
       const fp = typeof i.file_path === 'string' ? i.file_path : '';
-      return basename(fp);
+      return fp || '';
     }
     case 'Grep': {
       const pat = typeof i.pattern === 'string' ? i.pattern : '';
-      const path = typeof i.path === 'string' ? ` in ${basename(i.path)}` : '';
-      return truncate(`/${pat}/${path}`, 100);
+      const inGlob = typeof i.glob === 'string' && i.glob ? i.glob : '';
+      const inPath = typeof i.path === 'string' && i.path ? basename(i.path) : '';
+      const scope = inGlob || inPath;
+      // Task 17: Grep '<pattern>' in <glob>
+      const head = `'${truncate(pat, 60)}'`;
+      return scope ? truncate(`${head} in ${scope}`, 120) : head;
     }
     case 'Glob': {
       const pat = typeof i.pattern === 'string' ? i.pattern : '';
@@ -81,6 +109,24 @@ export function summarizeToolUse(name: string, input: unknown): string {
       return '';
     }
   }
+}
+
+/**
+ * Returns the absolute file path referenced by a Read/Write/Edit/NotebookEdit
+ * tool call (when present). Used to render a clickable chip below the bubble.
+ */
+export function extractToolFilePath(name: string, input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null;
+  const i = input as Record<string, unknown>;
+  if (
+    name === 'Read' ||
+    name === 'Write' ||
+    name === 'Edit' ||
+    name === 'NotebookEdit'
+  ) {
+    return typeof i.file_path === 'string' ? (i.file_path as string) : null;
+  }
+  return null;
 }
 
 export function summarizeToolResult(text: string): string {

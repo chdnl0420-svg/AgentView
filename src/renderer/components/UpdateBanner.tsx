@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+const POLL_INTERVAL_MS = 60_000;
+
 interface UpdateState {
   current: string;
   latest: string | null;
@@ -25,7 +27,7 @@ export function UpdateBanner(): JSX.Element | null {
       } catch { /* swallow */ }
     };
     run();
-    const t = window.setInterval(run, 60 * 60 * 1000);
+    const t = window.setInterval(run, POLL_INTERVAL_MS);
     const off = window.av.updater.onProgress((pct) => setProgress(pct));
     return () => { cancelled = true; window.clearInterval(t); off(); };
   }, []);

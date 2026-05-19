@@ -1,6 +1,6 @@
 {
   "name": "visualagents",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "AgentView — Claude Code /agents 화면 데스크톱 앱 (한글·UI 개선)",
   "main": "out/main/index.js",
   "author": "VisualAgents",
@@ -59,12 +59,16 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
+      "allowElevation": false,
       "allowToChangeInstallationDirectory": true,
       "installerIcon": "resources/icon.ico",
       "uninstallerIcon": "resources/icon.ico",
       "include": "resources/installer.nsh",
       "shortcutName": "AgentView",
       "menuCategory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
       "differentialPackage": false
     },
     "publish": null

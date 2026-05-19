@@ -32,9 +32,11 @@ export function SessionCard({
     if (deleteMode && onToggleDelete) onToggleDelete();
     else onSelect();
   };
+  const isWaiting = session.status === 'waiting';
   return (
     <div
-      className={`session-card ${selected ? 'selected' : ''} ${flash ? 'flash' : ''} ${deleteMode ? 'delete-mode' : ''} ${checkedForDelete ? 'checked' : ''}`}
+      className={`session-card ${selected ? 'selected' : ''} ${flash ? 'flash' : ''} ${deleteMode ? 'delete-mode' : ''} ${checkedForDelete ? 'checked' : ''} ${isWaiting ? 'waiting' : ''}`}
+      data-status={session.status}
       onClick={handleClick}
       role="button"
       tabIndex={0}
@@ -69,7 +71,6 @@ export function SessionCard({
       <div className={`card-snippet ${snippet ? '' : 'empty'}`}>{snippet}</div>
       <div className="card-foot">
         <span>{formatRelative(session.updatedAt, now)}</span>
-        <span className="pid">PID {session.pid}</span>
       </div>
     </div>
   );

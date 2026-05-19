@@ -300,11 +300,15 @@ select option:disabled {
   background: var(--bg-elev-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 16px 12px;
+  padding: 12px 14px;
   cursor: pointer;
-  transition: all 0.12s;
-  display: flex; flex-direction: column; gap: 8px;
-  min-height: 138px;
+  transition: all 0.12s, transform 200ms;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 6px;
+  min-height: 168px;
+  max-height: 168px;
+  height: 168px;
   position: relative; overflow: hidden;
 }
 .session-card:hover, .job-card:hover {
@@ -2032,18 +2036,54 @@ button.ask-panel-option.selected .ask-panel-key {
 }
 .session-card, .job-card {
   width: 290px !important;
-  height: 175px !important;
-  min-height: 175px !important;
-  max-height: 175px !important;
+  height: 168px !important;
+  min-height: 168px !important;
+  max-height: 168px !important;
   padding: 12px 14px !important;
   overflow: hidden;
 }
 .session-card .card-snippet, .job-card .card-snippet {
-  flex: 1;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   text-overflow: ellipsis;
   font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Responsive: keep fixed height even on narrow viewports */
+@media (max-width: 960px) {
+  .session-card, .job-card {
+    height: 168px !important;
+    min-height: 168px !important;
+    max-height: 168px !important;
+  }
+}
+
+/* Delete mode — slide status tag right to make room for checkbox on the left */
+.session-card.delete-mode .status-tag {
+  transform: translateX(28px);
+  transition: transform 200ms ease;
+}
+.session-card.delete-mode.checked {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Waiting state — soft amber glow pulse */
+@keyframes wait-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.18);
+    transform: scale(1.005);
+  }
+}
+.session-card.waiting,
+.session-card[data-status="waiting"] {
+  animation: wait-pulse 1.6s ease infinite;
+  border-color: var(--warn, #f59e0b);
 }

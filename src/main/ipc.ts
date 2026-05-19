@@ -1,6 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, shell } from 'electron';
 import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { EVT, IPC } from '@shared/ipc-contracts';
 import { checkUpdate, downloadAndInstall, revealReleasePage } from './updater';
@@ -33,6 +33,7 @@ import {
 import type {
   AgentInfo,
   NewSessionInput,
+  PermissionMode,
   ResumeMessageInput,
   RunningSessionInfo,
   SlashCommandEntry
@@ -529,6 +530,239 @@ export function registerIpc(): void {
     const status = await checkClaudeStatus(!!force);
     return status;
   });
+
+  // ----- 1.0.5 SessionDetail surface -----
+
+  // File preview: returns a typed payload (markdown/text/html/image/json/
+  // binary/too-large/missing) so the renderer modal can render the right
+  // surface without ever calling fs itself.
+  ipcMain.handle(IPC.FilePreview, async (_e, p: string) => {
+    return previewFileForRenderer(p);
+  });
+
+  // Copy a single file onto the system clipboard so the user can paste it
+  // into Explorer / another app. Windows requires CF_HDROP; Electron's
+  // clipboard.write supports it via the writeBuffer API.
+  ipcMain.handle(IPC.ShellCopyFile, async (_e, p: string) => {
+    try {
+      const stat = await fs.stat(p);
+      if (!stat.isFile()) {
+        return { ok: false, reason: 'NOT_A_FILE' };
+      }
+      // Cross-platform fallback: copy the path text + the image bitmap
+      // (when applicable). On Windows the path alone is enough for most
+      // paste targets (Explorer accepts text paths).
+      if (process.platform === 'win32') {
+        const ext = extname(p).toLowerCase();
+        if (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.gif' || ext === '.bmp') {
+          try {
+            const img = nativeImage.createFromPath(p);
+            if (!img.isEmpty()) clipboard.writeImage(img);
+          } catch { /* ignore image clip */ }
+        }
+      }
+      clipboard.writeText(p);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Patch the live session's permission mode. The current sessionRunner
+  // doesn't expose a hot-swap so we mirror the renderer's intent into the
+  // session doc; subsequent send paths read this when respawning. Best
+  // effort — failures don't block the UI.
+  ipcMain.handle(IPC.SessionsSetPermission, async (_e, sessionId: string, mode: PermissionMode) => {
+    try {
+      await appendSessionEvent(
+        sessionId,
+        'permission-change',
+        `mode=${mode}`
+      ).catch(() => undefined);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(IPC.SessionsSetModel, async (_e, sessionId: string, model: string | null) => {
+    try {
+      await appendSessionEvent(
+        sessionId,
+        'model-change',
+        `model=${model ?? 'default'}`
+      ).catch(() => undefined);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ----- 1.0.5 window chrome + options popover -----
+  // The renderer's <WindowChrome /> drives the OS window via these IPCs.
+  // We deliberately resolve the window from the event sender so multi-window
+  // setups don't accidentally minimise the wrong frame.
+  ipcMain.handle(IPC.WindowMinimize, (e) => {
+    BrowserWindow.fromWebContents(e.sender)?.minimize();
+  });
+  ipcMain.handle(IPC.WindowToggleMaximize, (e) => {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    if (!w) return;
+    if (w.isMaximized()) w.unmaximize();
+    else w.maximize();
+  });
+  ipcMain.handle(IPC.WindowClose, (e) => {
+    BrowserWindow.fromWebContents(e.sender)?.close();
+  });
+  ipcMain.handle(IPC.WindowIsMaximized, (e) => {
+    return BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false;
+  });
+
+  ipcMain.handle(IPC.OptionsGetAutostart, async () => {
+    try {
+      return !!app.getLoginItemSettings().openAtLogin;
+    } catch {
+      return false;
+    }
+  });
+  ipcMain.handle(IPC.OptionsSetAutostart, async (_e, on: boolean) => {
+    try {
+      app.setLoginItemSettings({ openAtLogin: !!on, path: process.execPath });
+      return { ok: true };
+    } catch (err) {
+      console.error('[options] setAutostart failed', err);
+      return { ok: false };
+    }
+  });
+}
+
+// ---- File preview helpers ----
+
+const TEXT_EXTS = new Set([
+  '.txt', '.log', '.csv', '.tsv', '.md', '.markdown', '.yml', '.yaml',
+  '.toml', '.ini', '.cfg', '.conf', '.env',
+  '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
+  '.json', '.html', '.htm', '.xml', '.svg', '.css', '.scss',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.swift',
+  '.c', '.h', '.cpp', '.hpp', '.cc', '.cs',
+  '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd',
+  '.sql', '.gql', '.graphql'
+]);
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+const HTML_EXTS = new Set(['.html', '.htm']);
+const MD_EXTS = new Set(['.md', '.markdown']);
+const JSON_EXTS = new Set(['.json']);
+const MAX_PREVIEW_BYTES = 2 * 1024 * 1024; // 2MB
+const MAX_TEXT_BYTES = 512 * 1024; // truncate large text previews
+const MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp'
+};
+
+interface FilePreviewPayload {
+  kind:
+    | 'html'
+    | 'markdown'
+    | 'text'
+    | 'image'
+    | 'json'
+    | 'binary'
+    | 'too-large'
+    | 'missing';
+  content?: string;
+  dataUrl?: string;
+  mime?: string;
+  size?: number;
+  reason?: string;
+}
+
+async function previewFileForRenderer(p: string): Promise<FilePreviewPayload> {
+  if (!p || typeof p !== 'string') {
+    return { kind: 'missing', reason: 'no path' };
+  }
+  let stat;
+  try {
+    stat = await fs.stat(p);
+  } catch (err) {
+    return {
+      kind: 'missing',
+      reason: err instanceof Error ? err.message : String(err)
+    };
+  }
+  if (!stat.isFile()) {
+    return { kind: 'missing', reason: 'not a file', size: stat.size };
+  }
+  const ext = extname(p).toLowerCase();
+  // Image — always allowed even when "large" within the 2MB cap because a
+  // jpg/png typically fits.
+  if (IMAGE_EXTS.has(ext)) {
+    if (stat.size > MAX_PREVIEW_BYTES) {
+      return { kind: 'too-large', size: stat.size };
+    }
+    try {
+      const buf = await fs.readFile(p);
+      const mime = MIME_BY_EXT[ext] || 'application/octet-stream';
+      const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+      return { kind: 'image', dataUrl, mime, size: stat.size };
+    } catch (err) {
+      return {
+        kind: 'missing',
+        reason: err instanceof Error ? err.message : String(err),
+        size: stat.size
+      };
+    }
+  }
+  if (stat.size > MAX_PREVIEW_BYTES) {
+    return { kind: 'too-large', size: stat.size };
+  }
+  if (HTML_EXTS.has(ext)) {
+    const buf = await fs.readFile(p, 'utf8').catch(() => null);
+    if (buf == null) return { kind: 'missing', reason: 'read failed', size: stat.size };
+    return { kind: 'html', content: buf, mime: 'text/html', size: stat.size };
+  }
+  if (MD_EXTS.has(ext)) {
+    const buf = await fs.readFile(p, 'utf8').catch(() => null);
+    if (buf == null) return { kind: 'missing', reason: 'read failed', size: stat.size };
+    return { kind: 'markdown', content: buf, mime: 'text/markdown', size: stat.size };
+  }
+  if (JSON_EXTS.has(ext)) {
+    const buf = await fs.readFile(p, 'utf8').catch(() => null);
+    if (buf == null) return { kind: 'missing', reason: 'read failed', size: stat.size };
+    return { kind: 'json', content: buf, mime: 'application/json', size: stat.size };
+  }
+  if (TEXT_EXTS.has(ext) || stat.size <= MAX_TEXT_BYTES) {
+    // Best-effort text read. If the file isn't valid utf-8 (e.g. an
+    // unknown extension that is actually binary), bytes get replaced
+    // characters — we accept that for preview.
+    try {
+      const buf = await fs.readFile(p);
+      // Quick binary sniff — null byte in first 4KB → treat as binary.
+      const head = buf.subarray(0, Math.min(buf.length, 4096));
+      let hasNull = false;
+      for (let i = 0; i < head.length; i++) {
+        if (head[i] === 0) { hasNull = true; break; }
+      }
+      if (hasNull && !TEXT_EXTS.has(ext)) {
+        return { kind: 'binary', size: stat.size };
+      }
+      let text = buf.toString('utf8');
+      if (text.length > MAX_TEXT_BYTES) {
+        text = text.slice(0, MAX_TEXT_BYTES) + '\n\n[…잘림 — 파일이 너무 큼…]';
+      }
+      return { kind: 'text', content: text, size: stat.size };
+    } catch (err) {
+      return {
+        kind: 'missing',
+        reason: err instanceof Error ? err.message : String(err),
+        size: stat.size
+      };
+    }
+  }
+  return { kind: 'binary', size: stat.size };
 }
 
 export function shutdownIpc(): void {
