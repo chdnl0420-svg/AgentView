@@ -62,6 +62,11 @@ function isEmptyDeadSession(s: BgSession): boolean {
 interface PendingSession {
   tempId: string;
   realSessionId: string | null;
+  // Timestamp the real session first appeared in the disk scan. Used to delay
+  // dropping the placeholder until the daemon-registered card has been visible
+  // for a brief cooldown — without this, a single flaky scan tick (daemon
+  // mid-write of state.json) silently unmounts the freshly-spawned agent card.
+  realSeenAt: number | null;
   startedAt: number;
   prompt: string;
   cwd: string;
@@ -71,6 +76,10 @@ interface PendingSession {
 
 const PENDING_PREFIX = 'pending-';
 const PENDING_MAX_LIFETIME_MS = 45_000;
+// Keep the placeholder around for this long after the real session first
+// appears in scan, so a transient miss on the next reload (the daemon writes
+// jobs/<short>/state.json incrementally) doesn't cause the card to vanish.
+const PENDING_HANDOFF_COOLDOWN_MS = 4_000;
 
 function makeTempId(): string {
   const rnd =
@@ -381,22 +390,66 @@ export default function App() {
     return [...placeholders, ...real];
   }, [scan, pending]);
 
-  // Drop pending entries whose real session has appeared in scan, or that have
-  // been hanging around past the max lifetime (safety net so a failed dispatch
-  // never leaves a "시작 중…" card stuck forever).
+  // Two-stage placeholder cleanup:
+  //  1. As soon as the real session first appears in scan, stamp realSeenAt.
+  //  2. Only drop the placeholder after PENDING_HANDOFF_COOLDOWN_MS has
+  //     elapsed since that first sighting — gives the daemon time to finish
+  //     writing state.json so a flaky reload tick doesn't unmount the card.
+  // PENDING_MAX_LIFETIME_MS remains the absolute safety net for a failed
+  // dispatch that never lands a real session.
   useEffect(() => {
     if (pending.length === 0) return;
     const scannedIds = new Set((scan?.sessions ?? []).map((s) => s.sessionId));
     const now = Date.now();
     setPending((prev) => {
-      const next = prev.filter((p) => {
-        if (p.realSessionId && scannedIds.has(p.realSessionId)) return false;
-        if (now - p.startedAt > PENDING_MAX_LIFETIME_MS) return false;
-        return true;
-      });
-      return next.length === prev.length ? prev : next;
+      let changed = false;
+      const next: PendingSession[] = [];
+      for (const p of prev) {
+        if (now - p.startedAt > PENDING_MAX_LIFETIME_MS) {
+          changed = true;
+          continue;
+        }
+        const inScan = p.realSessionId !== null && scannedIds.has(p.realSessionId);
+        if (inScan && p.realSeenAt === null) {
+          changed = true;
+          next.push({ ...p, realSeenAt: now });
+          continue;
+        }
+        if (p.realSeenAt !== null && now - p.realSeenAt >= PENDING_HANDOFF_COOLDOWN_MS) {
+          changed = true;
+          continue;
+        }
+        next.push(p);
+      }
+      return changed ? next : prev;
     });
   }, [scan, pending]);
+
+  // Re-trigger the cleanup after the handoff cooldown so the placeholder is
+  // dropped even if no new scan arrives in that window. Without this, a quiet
+  // daemon (worker started, no further updates) leaves the placeholder around
+  // until the next user interaction or PENDING_MAX_LIFETIME_MS.
+  useEffect(() => {
+    const pendingHandoff = pending.find((p) => p.realSeenAt !== null);
+    if (!pendingHandoff) return;
+    const fireAt = pendingHandoff.realSeenAt! + PENDING_HANDOFF_COOLDOWN_MS;
+    const delay = Math.max(0, fireAt - Date.now());
+    const id = window.setTimeout(() => {
+      setPending((prev) => {
+        const now = Date.now();
+        let changed = false;
+        const next = prev.filter((p) => {
+          if (p.realSeenAt !== null && now - p.realSeenAt >= PENDING_HANDOFF_COOLDOWN_MS) {
+            changed = true;
+            return false;
+          }
+          return true;
+        });
+        return changed ? next : prev;
+      });
+    }, delay + 16);
+    return () => window.clearTimeout(id);
+  }, [pending]);
   // Look up the selected session in the raw scan (not the filtered grid)
   // so that brand-new sessions can show up in the detail view even before
   // the next sessions watcher tick pulls them into the visible filter.
@@ -435,6 +488,7 @@ export default function App() {
         {
           tempId,
           realSessionId: null,
+          realSeenAt: null,
           startedAt: Date.now(),
           prompt: input.prompt,
           cwd: input.cwd,
