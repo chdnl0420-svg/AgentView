@@ -1744,7 +1744,14 @@ function ToolGroup({
 }) {
   const [expanded, setExpanded] = useState(false);
   const toolUses = items.filter((m) => m.kind === 'tool_use');
-  const lastToolName = toolUses[toolUses.length - 1]?.toolName ?? '도구';
+  const lastTool = toolUses[toolUses.length - 1];
+  const lastToolName = lastTool?.toolName ?? '도구';
+  // 1.0.5: ship the verbose summary inline so the aggregate header reads
+  // "도구 N회 · 최근: Read src/foo.ts" rather than the bare tool name. The
+  // summarizer already encodes file paths / commands / queries safely.
+  const lastToolBlurb = lastTool
+    ? summarizeToolUse(lastTool.toolName ?? '', lastTool.toolInput)
+    : '';
   const askUnanswered = items.find(
     (m) => m.kind === 'tool_use' && isAskUserQuestionInput(m.toolName ?? '', m.toolInput)
   );
@@ -1764,6 +1771,11 @@ function ToolGroup({
           <span className="tool-chev">{effectiveExpanded ? '▾' : '▸'}</span>
           <span className="tool-name">
             🔧 도구 {toolUses.length}회 · 최근: {lastToolName}
+            {lastToolBlurb ? (
+              <span className="tool-blurb" style={{ marginLeft: 6, color: 'var(--muted, #9aa1ad)', fontWeight: 400 }}>
+                {lastToolBlurb}
+              </span>
+            ) : null}
           </span>
           {askUnanswered && (
             <span className="tool-summary" style={{ color: 'var(--accent)' }}>
