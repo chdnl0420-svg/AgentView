@@ -39,7 +39,12 @@ const DAEMON_DIR = join(homedir(), '.claude', 'daemon');
 const DISPATCH_DIR = join(DAEMON_DIR, 'dispatch');
 const ROSTER_PATH = join(DAEMON_DIR, 'roster.json');
 const DISPATCH_POLL_MS = 200;
-const DISPATCH_POLL_TRIES = 12; // ~2.4 seconds — fall back to direct spawn quickly
+// ~10 seconds. The old 2.4 s budget was too tight on slow machines and would
+// silently fall back to Strategy B (direct PTY spawn), which produces a
+// kind:"interactive" session that never appears in `claude agents`. Waiting
+// longer keeps the registration in the bg-worker path so the new session
+// actually shows up on the CLI side.
+const DISPATCH_POLL_TRIES = 50;
 
 /**
  * Drop a dispatch JSON file into ~/.claude/daemon/dispatch and wait for the
