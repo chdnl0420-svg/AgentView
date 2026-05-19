@@ -110,6 +110,14 @@ function pendingToBgSession(p: PendingSession): BgSession {
   };
 }
 
+interface ClaudeStatus {
+  cliPath: string | null;
+  cliVersion: string | null;
+  daemonAlive: boolean;
+  supervisorPid: number | null;
+  checkedAt: number;
+}
+
 export default function App() {
   const [scan, setScan] = useState<ScanSessionsResult | null>(null);
   const [pending, setPending] = useState<PendingSession[]>([]);
@@ -117,6 +125,7 @@ export default function App() {
   const [running, setRunning] = useState<RunningSessionInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
   const [now, setNow] = useState(Date.now());
   const [flash, setFlash] = useState<Map<string, number>>(() => new Map());
   const [toast, setToast] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
@@ -248,6 +257,24 @@ export default function App() {
     reloadAgents();
     reloadRunning();
   }, [reloadSessions, reloadAgents, reloadRunning]);
+
+  // Poll Claude CLI / daemon status so the user can see when the runtime
+  // is missing or in the middle of being woken up, instead of staring at
+  // an unresponsive composer. Cheap call (~ms) on first launch + every 30s.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const s = await window.av.claude.status(false);
+        if (!cancelled) setClaudeStatus(s);
+      } catch {
+        /* ignore */
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, []);
 
   // periodic clock
   useEffect(() => {
@@ -539,10 +566,27 @@ export default function App() {
     </div>
   ) : null;
 
+  const claudeStatusBanner = claudeStatus && !claudeStatus.cliPath ? (
+    <div className="claude-status-banner error" role="status">
+      <span>⚠</span>
+      <span>Claude Code CLI 가 설치돼있지 않습니다.</span>
+      <button
+        type="button"
+        className="btn sm primary"
+        onClick={() => window.av.shell.openPath('https://github.com/anthropics/claude-code')}
+      >설치 안내</button>
+    </div>
+  ) : claudeStatus && claudeStatus.cliPath && !claudeStatus.daemonAlive ? (
+    <div className="claude-status-banner warn" role="status">
+      <span>◐</span>
+      <span>Claude Code 백그라운드 데몬이 꺼져있습니다 — 새 작업 시작 시 자동으로 깨웁니다.</span>
+    </div>
+  ) : null;
   if (selected) {
     return (
       <>
         <UpdateBanner />
+        {claudeStatusBanner}
         <FirstRunTutorial />
         <SessionDetail
           session={selected}
@@ -574,6 +618,7 @@ export default function App() {
   return (
     <div className="app no-chrome">
       <UpdateBanner />
+      {claudeStatusBanner}
       <FirstRunTutorial />
       <div className="dashboard">
         <div

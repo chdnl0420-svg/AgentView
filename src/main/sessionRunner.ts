@@ -9,6 +9,8 @@ import type { ClaudeRunEvent, NewSessionInput, ResumeMessageInput } from '@share
 import { sendToBackgroundAgent } from './daemonAttach';
 import { createWorktree } from './git';
 import { rememberOwned } from './ownedSessions';
+import { checkClaudeStatus, ensureDaemonRunning } from './claudePreflight';
+import { appendSessionEvent, updateSessionStatus, writeSessionDoc } from './workspaceStore';
 
 const WORKER_SETTLE_MS = 2500;
 const ATTACH_RETRY_MS = 600;
@@ -45,6 +47,10 @@ const DISPATCH_POLL_MS = 200;
 // longer keeps the registration in the bg-worker path so the new session
 // actually shows up on the CLI side.
 const DISPATCH_POLL_TRIES = 50;
+// Fast-fail when the bg daemon supervisor is provably down. Without this
+// we waste the full 10s above before realizing nothing will ever pick the
+// dispatch file up. With it the user sees Strategy B (PTY) within ~2s.
+const DISPATCH_POLL_TRIES_NO_DAEMON = 8;
 
 /**
  * Drop a dispatch JSON file into ~/.claude/daemon/dispatch and wait for the
@@ -59,6 +65,9 @@ async function dispatchToDaemon(args: {
   name: string | null;
   prompt: string;
   permissionMode?: string | null;
+  /** Bound the daemon-registration wait. Pass DISPATCH_POLL_TRIES_NO_DAEMON
+   *  when preflight reports supervisor dead so we don't waste 10s. */
+  maxTries?: number;
 }): Promise<number | null> {
   const short = args.sessionId.slice(0, 8);
   const launchArgs: string[] = ['--session-id', args.sessionId];
@@ -97,7 +106,8 @@ async function dispatchToDaemon(args: {
     console.error('[runner] dispatch write failed', err);
     return null;
   }
-  for (let i = 0; i < DISPATCH_POLL_TRIES; i++) {
+  const tries = Math.max(1, args.maxTries ?? DISPATCH_POLL_TRIES);
+  for (let i = 0; i < tries; i++) {
     await new Promise((res) => setTimeout(res, DISPATCH_POLL_MS));
     try {
       const raw = await fsp.readFile(ROSTER_PATH, 'utf8');
@@ -202,6 +212,42 @@ export class SessionRunner extends EventEmitter {
       /* best-effort */
     });
     this.rememberLastPrompt(sessionId, input.prompt);
+    // Persist a markdown blueprint for this task so an interrupted/crashed
+    // app can resume from it on the next launch. Goal-1+7 of release 1.0.4.
+    writeSessionDoc({
+      sessionId,
+      cwd: spawnCwd,
+      agent: input.agent || 'claude',
+      name: input.name || null,
+      prompt: input.prompt,
+      status: 'pending',
+      createdAt: Date.now()
+    }).catch(() => {
+      /* best-effort */
+    });
+
+    // Preflight — is claude CLI even installed? Is the bg supervisor up?
+    // If supervisor is down, kick a bootstrap (claude agents --headless) so
+    // Strategy A has a chance to land, but cap the polling at 2s instead of
+    // 10s so the UI doesn't stall when the bootstrap fails.
+    const status = await checkClaudeStatus();
+    if (!status.cliPath) {
+      const msg =
+        'Claude Code CLI 가 설치돼있지 않습니다. PowerShell 에서 "npm install -g @anthropic-ai/claude-code" 로 설치 후 다시 시도해주세요.';
+      this.emit('event', {
+        sessionId,
+        type: 'error',
+        message: msg,
+        ts: Date.now()
+      } satisfies ClaudeRunEvent);
+      appendSessionEvent(sessionId, 'error', msg).catch(() => undefined);
+      return { sessionId, pid: null };
+    }
+    let daemonAlive = status.daemonAlive;
+    if (!daemonAlive) {
+      console.log('[runner] daemon supervisor not alive — bootstrap attempt');
+      daemonAlive = await ensureDaemonRunning();
+    }
 
     // Strategy A — daemon dispatch. Writes ~/.claude/daemon/dispatch/<short>.json
     // so the supervisor spawns claude as a kind:"bg" worker. This is the only
@@ -215,7 +261,8 @@ export class SessionRunner extends EventEmitter {
       model: input.model || null,
       name: input.name || null,
       prompt: input.prompt,
-      permissionMode: input.permissionMode || null
+      permissionMode: input.permissionMode || null,
+      maxTries: daemonAlive ? undefined : DISPATCH_POLL_TRIES_NO_DAEMON
     });
     if (dispatchPid !== null) {
       this.deliverInitialPromptToBgWorker(sessionId, input.prompt).catch((err) => {
@@ -233,6 +280,7 @@ export class SessionRunner extends EventEmitter {
         pid: dispatchPid,
         ts: Date.now()
       } satisfies ClaudeRunEvent);
+      appendSessionEvent(sessionId, 'spawn', `bg-worker pid=${dispatchPid}`).catch(() => undefined);
       return { sessionId, pid: dispatchPid };
     }
 
@@ -241,6 +289,11 @@ export class SessionRunner extends EventEmitter {
     // is created as kind:"interactive" so it won't show in `claude agents`,
     // but at least the user gets a working chat.
     console.warn('[runner] daemon dispatch unavailable, falling back to direct PTY spawn');
+    appendSessionEvent(
+      sessionId,
+      'note',
+      `daemon-dispatch-failed; fallback=direct-pty; daemonAlive=${daemonAlive}`
+    ).catch(() => undefined);
     const slot = this.spawn(
       sessionId,
       ['--session-id', sessionId],
@@ -249,6 +302,7 @@ export class SessionRunner extends EventEmitter {
     );
     if (!slot) return { sessionId, pid: null };
     slot.promptDelivered = true;
+    appendSessionEvent(sessionId, 'spawn', `direct-pty pid=${slot.pid}`).catch(() => undefined);
     return { sessionId, pid: slot.pid };
   }
 
@@ -291,6 +345,7 @@ export class SessionRunner extends EventEmitter {
       // Already alive — type into the same PTY immediately.
       this.tryDeliver(existing, input.prompt);
       this.rememberLastPrompt(input.sessionId, input.prompt);
+      appendSessionEvent(input.sessionId, 'resume', `inline prompt=${input.prompt.slice(0, 60)}`).catch(() => undefined);
       return { sessionId: input.sessionId, pid: existing.pid };
     }
     // Dead PTY → respawn with the prompt as a positional arg so claude
@@ -302,6 +357,7 @@ export class SessionRunner extends EventEmitter {
     rememberOwned(input.sessionId).catch(() => {
       /* best-effort */
     });
+    appendSessionEvent(input.sessionId, 'resume', `respawn pid=${slot.pid} prompt=${input.prompt.slice(0, 60)}`).catch(() => undefined);
     return { sessionId: input.sessionId, pid: slot.pid };
   }
 
@@ -439,6 +495,9 @@ export class SessionRunner extends EventEmitter {
         ts: Date.now()
       } satisfies ClaudeRunEvent);
       this.emit('procs-changed');
+      const finalStatus: 'completed' | 'crashed' =
+        typeof exitCode === 'number' && exitCode !== 0 ? 'crashed' : 'completed';
+      updateSessionStatus(sessionId, finalStatus).catch(() => undefined);
     });
 
     // Fallback: if neither marker shows up in time, deliver the prompt anyway.
@@ -462,7 +521,10 @@ export class SessionRunner extends EventEmitter {
 
   private onPtyData(slot: PtySlot, chunk: string): void {
     const cleaned = chunk.replace(ANSI_STRIP, '');
-    slot.outputBuf = (slot.outputBuf + cleaned).slice(-6000);
+    // 4KB rolling buffer — enough to spot the trust + ready markers and
+    // capture a stderr tail on exit, but small enough that hundreds of
+    // parallel sessions don't pile up MB of unused log text.
+    slot.outputBuf = (slot.outputBuf + cleaned).slice(-4000);
 
     // Trust dialog → press Enter to accept option 1 ("Yes, I trust this folder").
     if (!slot.trustHandled && TRUST_MARKER.test(slot.outputBuf)) {

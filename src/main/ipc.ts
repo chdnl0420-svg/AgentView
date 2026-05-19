@@ -21,6 +21,15 @@ import { LiveWatcher } from './liveWatcher';
 import { listBranches, suggestWorktreePath } from './git';
 import { ensureOwnedLoaded } from './ownedSessions';
 import { markHidden } from './hiddenSessions';
+import { checkClaudeStatus, ensureDaemonRunning } from './claudePreflight';
+import {
+  appendSessionEvent,
+  listSessionSummaries,
+  readSessionDoc,
+  renderReportHtml,
+  updateSessionStatus,
+  workspaceRoot
+} from './workspaceStore';
 import type {
   AgentInfo,
   NewSessionInput,
@@ -231,7 +240,24 @@ export function registerIpc(): void {
     if (externalAlive) {
       const result = await sendToBackgroundAgent(input.sessionId, input.prompt);
       if (result.ok) {
+        appendSessionEvent(input.sessionId, 'resume', `prompt=${input.prompt.slice(0, 60)}`).catch(() => undefined);
         return { sessionId: input.sessionId, pid: result.pid };
+      }
+      // The daemon may have died between scan and dispatch. Try one bootstrap
+      // + retry before reporting the failure to the user — that's exactly the
+      // "Claude Code wasn't running, just start it" UX requested for 1.0.4.
+      const status = await checkClaudeStatus(true);
+      if (status.cliPath && !status.daemonAlive) {
+        await ensureDaemonRunning();
+        const retry = await sendToBackgroundAgent(input.sessionId, input.prompt);
+        if (retry.ok) {
+          appendSessionEvent(
+            input.sessionId,
+            'resume',
+            `recovered-after-bootstrap; prompt=${input.prompt.slice(0, 60)}`
+          ).catch(() => undefined);
+          return { sessionId: input.sessionId, pid: retry.pid };
+        }
       }
       throw new Error(
         `ATTACH_FAILED: 외부 에이전트에 메시지를 전달하지 못했습니다 (${result.reason}). ` +
@@ -468,6 +494,40 @@ export function registerIpc(): void {
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  // ----- Workspace (.claude/agentview/workspace) — per-session .md +
+  //       reports/ html. Used by the renderer to surface interrupted tasks
+  //       on launch and to export reports when the user asks.
+  ipcMain.handle(IPC.WorkspaceList, async () => listSessionSummaries());
+  ipcMain.handle(IPC.WorkspaceRead, async (_e, sessionId: string) => readSessionDoc(sessionId));
+  ipcMain.handle(IPC.WorkspaceExportReport, async (_e, sessionId: string) => {
+    try {
+      const md = await readSessionDoc(sessionId);
+      if (!md) return { ok: false, reason: 'NOT_FOUND' };
+      const reportPath = await renderReportHtml({
+        title: `AgentView Session ${sessionId.slice(0, 8)} Report`,
+        markdown: md,
+        reportId: `session-${sessionId.slice(0, 8)}`
+      });
+      // Open the html report in the OS default browser per CLAUDE.md
+      // Section 6.3.1 (D) — user clicks → real browser.
+      shell.openPath(reportPath).catch(() => undefined);
+      return { ok: true, path: reportPath };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle(IPC.WorkspaceOpenRoot, async () => {
+    await shell.openPath(workspaceRoot()).catch(() => undefined);
+  });
+
+  // ----- Claude Code preflight status. The renderer polls this on launch
+  //       (and on submit failure) so it can show a "CLI 가 없음 / 데몬 깨우는 중"
+  //       banner instead of falling into an empty 10s wait. Goal 5 of 1.0.4.
+  ipcMain.handle(IPC.ClaudeStatus, async (_e, force?: boolean) => {
+    const status = await checkClaudeStatus(!!force);
+    return status;
   });
 }
 
