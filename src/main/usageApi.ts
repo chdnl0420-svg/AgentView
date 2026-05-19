@@ -159,6 +159,11 @@ const FIVE_HOUR_KEYS = [
 ];
 
 const WEEKLY_KEYS = [
+  // The endpoint returned by claude.ai/api/oauth/usage as of 2026-05 calls
+  // the weekly bucket `seven_day` (with a `utilization` percent inside).
+  // Keep the historical aliases for older shapes.
+  'seven_day',
+  'sevenDay',
   'weekly',
   'weekly_usage',
   'week',
@@ -195,7 +200,9 @@ function toBucket(b: Record<string, unknown> | undefined): UsageBucket | undefin
   const used = Number(b.used ?? b.consumed ?? b.value ?? 0);
   const limit = Number(b.limit ?? b.max ?? b.quota ?? b.cap ?? 0);
   let pct: number | undefined;
-  for (const k of ['pct', 'percent', 'percentage', 'usage_percent', 'usagePercent']) {
+  // `utilization` is what claude.ai/api/oauth/usage returns (0..100 percent).
+  // Keep the historical aliases first so any new shape can still override.
+  for (const k of ['pct', 'percent', 'percentage', 'usage_percent', 'usagePercent', 'utilization']) {
     const v = (b as Record<string, unknown>)[k];
     if (typeof v === 'number' && Number.isFinite(v)) {
       pct = v;
@@ -211,6 +218,8 @@ function toBucket(b: Record<string, unknown> | undefined): UsageBucket | undefin
     (b.reset_at as string | undefined) ||
     (b.resetAt as string | undefined) ||
     (b.resetIso as string | undefined) ||
+    (b.resets_at as string | undefined) ||
+    (b.resetsAt as string | undefined) ||
     (b.expires_at as string | undefined) ||
     (b.expiresAt as string | undefined);
   return { used, limit, pct, resetIso: iso, resetIn: fmtResetIn(iso) };

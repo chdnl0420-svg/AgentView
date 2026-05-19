@@ -168,6 +168,29 @@ export function SessionDetail({
     setCrashDismissed(false);
   }, [session.sessionId]);
 
+  // ---- Top-panel badge dropdowns + transient toast for "다음 메시지부터 적용" ----
+  const [permDropdownOpen, setPermDropdownOpen] = useState(false);
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [badgeToast, setBadgeToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!badgeToast) return;
+    const t = window.setTimeout(() => setBadgeToast(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [badgeToast]);
+  // Goal text shown in the goal-row: workspace doc prompt first, then last
+  // user message, then nothing (the row hides itself).
+  const goalText = workspacePrompt || null;
+  // Korean label for the four claude permission modes.
+  const permLabel = (mode: string): string => {
+    switch (mode) {
+      case 'bypassPermissions': return '전체 허용';
+      case 'acceptEdits': return '편집만 자동';
+      case 'default': return '기본 확인';
+      case 'plan': return '계획 모드';
+      default: return mode;
+    }
+  };
+
   // ---- Permission / Model dropdowns + ephemeral toast ----
   const [permMenuOpen, setPermMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -770,10 +793,63 @@ export function SessionDetail({
           )}
           <div className="meta-row">
             <span className={`status-tag ${session.status}`}>{statusLabel(session)}</span>
+            {data?.meta?.permissionMode && (
+              <button
+                type="button"
+                className="perm-tag clickable"
+                title="권한 모드 (다음 메시지부터 적용)"
+                onClick={() => setPermDropdownOpen((v) => !v)}
+              >
+                🛡 {permLabel(data.meta.permissionMode as string)}
+                <span className="caret">▾</span>
+              </button>
+            )}
+            {permDropdownOpen && (
+              <div className="badge-dropdown" role="menu">
+                {(['bypassPermissions','acceptEdits','default','plan'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    role="menuitem"
+                    onClick={async () => {
+                      setPermDropdownOpen(false);
+                      try {
+                        await window.av.sessions.setPermission(session.sessionId, m);
+                        setBadgeToast('권한이 다음 메시지부터 적용됩니다.');
+                      } catch {/* ignore */}
+                    }}
+                  >{permLabel(m)}</button>
+                ))}
+              </div>
+            )}
             {modelLabel && (
-              <span className="model-tag" title="이 에이전트가 마지막으로 사용한 모델">
+              <button
+                type="button"
+                className="model-tag clickable"
+                title="모델 (다음 메시지부터 적용)"
+                onClick={() => setModelDropdownOpen((v) => !v)}
+              >
                 🧠 {modelLabel}
-              </span>
+                <span className="caret">▾</span>
+              </button>
+            )}
+            {modelDropdownOpen && (
+              <div className="badge-dropdown" role="menu">
+                {(['opus','sonnet','haiku'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    role="menuitem"
+                    onClick={async () => {
+                      setModelDropdownOpen(false);
+                      try {
+                        await window.av.sessions.setModel(session.sessionId, m);
+                        setBadgeToast('모델이 다음 메시지부터 적용됩니다.');
+                      } catch {/* ignore */}
+                    }}
+                  >{m}</button>
+                ))}
+              </div>
             )}
             <button
               ref={contextBtnRef}
@@ -787,7 +863,42 @@ export function SessionDetail({
               <ContextDonut percent={contextPct} />
             </button>
             <span title={session.cwd}>{session.cwd}</span>
+            <button
+              type="button"
+              className={`filter-toggle ${onlyMine ? 'on' : ''}`}
+              title="내 메시지만 보기"
+              onClick={() => {
+                const next = !onlyMine;
+                setOnlyMine(next);
+                saveJSON('view.onlyMine.' + session.sessionId, next);
+              }}
+            >
+              👤 내 메시지만
+            </button>
           </div>
+          {badgeToast && (
+            <div className="badge-toast" role="status">{badgeToast}</div>
+          )}
+          {session.status === 'crashed' && !crashDismissed && (
+            <div className="crash-banner" role="alert">
+              <span>⚠ 에이전트가 비정상 종료되었습니다. 마지막 응답을 확인하세요.</span>
+              <button type="button" className="x" onClick={() => setCrashDismissed(true)} aria-label="닫기">×</button>
+            </div>
+          )}
+          {goalText && (
+            <div className={`goal-row ${goalDone ? 'completed' : ''}`}>
+              <input
+                type="checkbox"
+                checked={goalDone}
+                onChange={(e) => {
+                  setGoalDone(e.target.checked);
+                  saveJSON('goal.done.' + session.sessionId, e.target.checked);
+                }}
+                aria-label="목표 완료"
+              />
+              <span className="goal-text">🎯 {goalText}</span>
+            </div>
+          )}
           {contextPanelOpen && (
             <>
               <div
@@ -840,7 +951,9 @@ export function SessionDetail({
                         )}
                       </>
                     ) : (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>불러오는 중…</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>
+                        {usage ? '측정 불가' : '불러오는 중…'}
+                      </span>
                     )}
                   </span>
                 </div>
@@ -860,7 +973,9 @@ export function SessionDetail({
                         )}
                       </>
                     ) : (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>불러오는 중…</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11.5 }}>
+                        {usage ? '측정 불가' : '불러오는 중…'}
+                      </span>
                     )}
                   </span>
                 </div>
@@ -869,10 +984,6 @@ export function SessionDetail({
                     <div className="context-bar-fill" style={{ width: `${Math.min(100, usage.weekly.pct)}%` }} />
                   </div>
                 )}
-                <div className="context-row">
-                  <span className="context-row-label">모델</span>
-                  <span className="context-row-value">{modelLabel || '—'}</span>
-                </div>
               </div>
             </>
           )}
