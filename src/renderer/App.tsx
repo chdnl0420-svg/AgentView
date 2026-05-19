@@ -2,47 +2,179 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentInfo,
   BgSession,
-  JobEvent,
-  JobInfo,
+  ClaudeRunEvent,
+  NewSessionInput,
+  RunningSessionInfo,
   ScanSessionsResult
 } from '@shared/types';
 import { SessionCard } from './components/SessionCard';
-import { JobCard } from './components/JobCard';
-import { ConversationView } from './components/ConversationView';
-import { JobStreamView } from './components/JobStreamView';
-import { InputBar } from './components/InputBar';
+import { SessionDetail, type QueuedPrompt } from './components/SessionDetail';
+import { InputBar, type InputDraft } from './components/InputBar';
+import { UpdateBanner } from './components/UpdateBanner';
+import { FirstRunTutorial } from './components/FirstRunTutorial';
+import { loadJSON, saveJSON } from './lib/persistence';
 
-type Tab = 'sessions' | 'jobs';
-type SelectionKind = 'session' | 'job' | null;
-
-interface Selection {
-  kind: SelectionKind;
-  id: string | null;
-}
+const NEW_DRAFT_KEY = 'draft.new';
+const RESUME_DRAFTS_KEY = 'draft.resume';
+const RENAMES_KEY = 'sessionRenames';
 
 const DEFAULT_CWD = 'D:\\Project\\VisualAgents';
 const FLASH_MS = 900;
 
+// Re-read the user's saved rename map on each render of the dashboard. It's
+// authored from SessionDetail (where the user typed it) and read here so the
+// card grid + browser tab labels show the same custom name.
+function loadRenames(): Record<string, string> {
+  return loadJSON<Record<string, string>>(RENAMES_KEY, {});
+}
+
+type SessionFilter = 'running' | 'waiting' | 'completed' | 'finished';
+
+// Split alive sessions into two tabs: "실행 중" (agent currently working) and
+// "대기" (agent idle, waiting for next prompt). Without the 대기 tab, sessions
+// that go idle would silently disappear from the default view.
+function classify(s: BgSession): SessionFilter {
+  if (s.alive) {
+    return s.status === 'running' ? 'running' : 'waiting';
+  }
+  if (s.status === 'completed') return 'completed';
+  return 'finished';
+}
+
+function isEmptyDeadSession(s: BgSession): boolean {
+  if (s.alive) return false;
+  // Claude job entries (kind:"bg") are always real — they came from
+  // ~/.claude/jobs/<short>/state.json which is the same source `claude agents`
+  // uses. Keep them regardless of pid/name so the AgentView grid mirrors
+  // the CLI exactly.
+  if ((s.kind || '').toLowerCase() === 'bg') return false;
+  // Anonymous kind:"app" jsonl-only orphans with no meaningful title.
+  const shortId = s.sessionId.slice(0, 8).toLowerCase();
+  const title = (s.name || s.agent || '').trim().toLowerCase();
+  if (!title || title === shortId || /^이름\s*없음$/.test(title)) return true;
+  return false;
+}
+
 export default function App() {
-  const [tab, setTab] = useState<Tab>('sessions');
   const [scan, setScan] = useState<ScanSessionsResult | null>(null);
-  const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
-  const [selection, setSelection] = useState<Selection>({ kind: null, id: null });
-  const [loadingSessions, setLoadingSessions] = useState(true);
+  const [running, setRunning] = useState<RunningSessionInfo[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(Date.now());
   const [flash, setFlash] = useState<Map<string, number>>(() => new Map());
+  const [toast, setToast] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
+  const [filter, setFilter] = useState<Set<SessionFilter>>(
+    () => new Set(['running', 'waiting', 'completed'])
+  );
+  const [renames, setRenames] = useState<Record<string, string>>(() => loadRenames());
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(() => new Set());
+  const toggleDeleteMode = useCallback(() => {
+    setDeleteMode((v) => {
+      if (v) setSelectedForDelete(new Set());
+      return !v;
+    });
+  }, []);
+  const toggleDeleteSelection = useCallback((sid: string) => {
+    setSelectedForDelete((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid); else next.add(sid);
+      return next;
+    });
+  }, []);
+  const performBulkDelete = useCallback(async () => {
+    const ids = Array.from(selectedForDelete);
+    if (ids.length === 0) return;
+    const confirmMsg = `${ids.length}개 세션을 삭제합니다. claude agents 에서도 함께 제거됩니다. 계속할까요?`;
+    if (!window.confirm(confirmMsg)) return;
+    const result = await window.av.sessions.deleteMany(ids);
+    if (result.failed.length > 0) {
+      setToast({ kind: 'error', text: `일부 삭제 실패 (${result.failed.length}건): ${result.failed[0].reason}` });
+    } else {
+      setToast({ kind: 'info', text: `${result.deleted.length}개 세션을 삭제했습니다.` });
+    }
+    setSelectedForDelete(new Set());
+    setDeleteMode(false);
+    reloadSessions();
+  }, [selectedForDelete]);
+  // SessionDetail writes to localStorage directly; refresh ours whenever the
+  // selection or window focus changes so the new name lands on the cards.
+  useEffect(() => {
+    const onFocus = () => setRenames(loadRenames());
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('storage', onFocus);
+    window.addEventListener('agentview:renames-changed', onFocus as EventListener);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('storage', onFocus);
+      window.removeEventListener('agentview:renames-changed', onFocus as EventListener);
+    };
+  }, []);
   const reloadTimer = useRef<number | null>(null);
+  const gridScrollRef = useRef<number>(0);
+  // Drafts keyed by sessionId so the user's in-progress prompt + attachments
+  // survive going back to the grid AND surviving an app restart (we mirror
+  // them into localStorage on every change).
+  const draftsRef = useRef<Map<string, InputDraft>>(
+    new Map(
+      Object.entries(loadJSON<Record<string, InputDraft>>(RESUME_DRAFTS_KEY, {}))
+    )
+  );
+  const [, setDraftBump] = useState(0); // force re-render after draft change
+  const persistResumeDrafts = useCallback(() => {
+    const out: Record<string, InputDraft> = {};
+    for (const [sid, d] of draftsRef.current.entries()) out[sid] = d;
+    saveJSON(RESUME_DRAFTS_KEY, out);
+  }, []);
+  const setDraft = useCallback(
+    (sessionId: string, draft: InputDraft) => {
+      if (!draft.prompt && draft.attachments.length === 0) {
+        draftsRef.current.delete(sessionId);
+      } else {
+        draftsRef.current.set(sessionId, draft);
+      }
+      persistResumeDrafts();
+      setDraftBump((v) => v + 1);
+    },
+    [persistResumeDrafts]
+  );
+  const [newDraft, setNewDraftState] = useState<InputDraft>(() =>
+    loadJSON<InputDraft>(NEW_DRAFT_KEY, { prompt: '', attachments: [] })
+  );
+  const setNewDraft = useCallback((d: InputDraft) => {
+    setNewDraftState(d);
+    if (!d.prompt && d.attachments.length === 0) {
+      saveJSON(NEW_DRAFT_KEY, { prompt: '', attachments: [] });
+    } else {
+      saveJSON(NEW_DRAFT_KEY, d);
+    }
+  }, []);
+
+  // Queued messages while an agent is busy. The first item is sent
+  // automatically once the agent flips back to idle; the user can remove an
+  // item with × and the prompt jumps back into the composer.
+  const [queues, setQueues] = useState<Record<string, QueuedPrompt[]>>({});
+  const setQueue = useCallback(
+    (sessionId: string, updater: (prev: QueuedPrompt[]) => QueuedPrompt[]) => {
+      setQueues((prev) => {
+        const cur = prev[sessionId] ?? [];
+        const next = updater(cur);
+        if (next.length === 0) {
+          if (!(sessionId in prev)) return prev;
+          const { [sessionId]: _, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [sessionId]: next };
+      });
+    },
+    []
+  );
 
   const reloadSessions = useCallback(async () => {
     const result = await window.av.sessions.list();
     setScan(result);
-    setLoadingSessions(false);
-  }, []);
-
-  const reloadJobs = useCallback(async () => {
-    const list = await window.av.jobs.list();
-    setJobs(list);
+    setLoading(false);
   }, []);
 
   const reloadAgents = useCallback(async () => {
@@ -50,19 +182,67 @@ export default function App() {
     setAgents(list);
   }, []);
 
+  const reloadRunning = useCallback(async () => {
+    const list = await window.av.sessions.runningList();
+    setRunning(list);
+  }, []);
+
   useEffect(() => {
     reloadSessions();
-    reloadJobs();
     reloadAgents();
-  }, [reloadSessions, reloadJobs, reloadAgents]);
+    reloadRunning();
+  }, [reloadSessions, reloadAgents, reloadRunning]);
 
-  // periodic clock for relative time
+  // periodic clock
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
 
-  // sessions watcher (file-level updates)
+  // Browser-style back/forward navigation between dashboard <-> detail view.
+  // - Back (Esc / Mouse XButton1 / button=3) leaves the detail and remembers
+  //   the sid in lastSelectedIdRef so the next forward press can restore it.
+  // - Forward (Mouse XButton2 / button=4) re-enters the most-recent detail.
+  // The listener stays attached in both modes because the forward press
+  // must work when selectedId is null.
+  const lastSelectedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedId) lastSelectedIdRef.current = selectedId;
+  }, [selectedId]);
+  useEffect(() => {
+    const isTextTarget = (t: EventTarget | null) => {
+      if (!(t instanceof HTMLElement)) return false;
+      const tag = t.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return true;
+      return t.isContentEditable;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedId && !isTextTarget(e.target)) {
+        e.preventDefault();
+        setSelectedId(null);
+      }
+    };
+    const onMouseUp = (e: MouseEvent) => {
+      // Windows physical mouse: XButton1 (back) -> button=3, XButton2 (forward) -> button=4.
+      if (e.button === 3 && selectedId) {
+        e.preventDefault();
+        setSelectedId(null);
+        return;
+      }
+      if (e.button === 4 && !selectedId && lastSelectedIdRef.current) {
+        e.preventDefault();
+        setSelectedId(lastSelectedIdRef.current);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [selectedId]);
+
+  // sessions watcher
   useEffect(() => {
     const offChanged = window.av.sessions.onChanged(() => {
       if (reloadTimer.current) window.clearTimeout(reloadTimer.current);
@@ -73,9 +253,8 @@ export default function App() {
         if (!prev) return prev;
         const idx = prev.sessions.findIndex((x) => x.sessionId === s.sessionId);
         let nextList: BgSession[];
-        if (idx === -1) {
-          nextList = [s, ...prev.sessions];
-        } else {
+        if (idx === -1) nextList = [s, ...prev.sessions];
+        else {
           nextList = prev.sessions.slice();
           nextList[idx] = s;
         }
@@ -85,7 +264,6 @@ export default function App() {
         });
         return { ...prev, sessions: nextList };
       });
-      // flash the card briefly
       setFlash((prev) => {
         const next = new Map(prev);
         next.set(s.sessionId, Date.now());
@@ -96,6 +274,31 @@ export default function App() {
       offChanged();
       offUpdated();
     };
+  }, [reloadSessions]);
+
+  // running list updates
+  useEffect(() => {
+    const off = window.av.sessions.onRunningChanged((list) => setRunning(list));
+    return off;
+  }, []);
+
+  // run events (toast on errors / busy)
+  useEffect(() => {
+    const off = window.av.sessions.onRunEvent((evt: ClaudeRunEvent) => {
+      if (evt.type === 'error') {
+        setToast({ kind: 'error', text: `claude 실행 실패: ${evt.message}` });
+      } else if (evt.type === 'busy') {
+        setToast({ kind: 'info', text: '이 에이전트는 이미 작업 중입니다. 끝난 뒤 다시 보내주세요.' });
+      } else if (evt.type === 'exit' && evt.exitCode !== 0 && evt.exitCode !== null) {
+        const detail = evt.stderr ? ` (${evt.stderr.split('\n')[0].slice(0, 120)})` : '';
+        setToast({ kind: 'error', text: `claude 종료 코드 ${evt.exitCode}${detail}` });
+      } else if (evt.type === 'spawn') {
+        setToast(null);
+      }
+      // Sessions disk-state will update via the live watcher (sessions/jsonl files).
+      reloadSessions();
+    });
+    return off;
   }, [reloadSessions]);
 
   // sweep stale flash markers
@@ -112,150 +315,158 @@ export default function App() {
     return () => window.clearTimeout(id);
   }, [flash]);
 
-  // job stream
+  // auto-dismiss toast
   useEffect(() => {
-    const offEvt = window.av.jobs.onEvent((e: JobEvent) => {
-      setJobs((prev) =>
-        prev.map((j) => {
-          if (j.jobId !== e.jobId) return j;
-          if (e.type === 'stdout') return { ...j, output: appendClipped(j.output, e.data ?? '') };
-          if (e.type === 'stderr')
-            return { ...j, errorOutput: appendClipped(j.errorOutput, e.data ?? '') };
-          return j;
-        })
-      );
-    });
-    const offUpd = window.av.jobs.onUpdated((j: JobInfo) => {
-      setJobs((prev) => {
-        const exists = prev.some((x) => x.jobId === j.jobId);
-        if (exists) return prev.map((x) => (x.jobId === j.jobId ? mergeJob(x, j) : x));
-        return [j, ...prev];
-      });
-    });
-    return () => {
-      offEvt();
-      offUpd();
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  const sessionsList = useMemo(
+    () => (scan?.sessions ?? []).filter((s) => !isEmptyDeadSession(s)),
+    [scan]
+  );
+  // Look up the selected session in the raw scan (not the filtered grid)
+  // so that brand-new sessions can show up in the detail view even before
+  // the next sessions watcher tick pulls them into the visible filter.
+  const selected = useMemo<BgSession | null>(() => {
+    if (!selectedId) return null;
+    const hit = (scan?.sessions ?? []).find((s) => s.sessionId === selectedId);
+    if (hit) return hit;
+    // Placeholder while the sessions watcher catches up with a freshly
+    // spawned agent. Lets SessionDetail mount immediately instead of
+    // bouncing back to the grid for the first second after "새 작업 시작".
+    return {
+      sessionId: selectedId,
+      pid: 0,
+      cwd: DEFAULT_CWD,
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      name: '시작 중…',
+      agent: 'claude',
+      status: 'idle',
+      alive: true,
+      metaPath: '',
+      conversationPath: null,
+      conversationSize: 0
     };
-  }, []);
+  }, [scan, selectedId]);
 
-  const sessionsList = scan?.sessions ?? [];
-  const activeCount = sessionsList.filter(
-    (s) => s.alive && s.status !== 'finished' && s.status !== 'crashed'
-  ).length;
-  const jobsAliveCount = jobs.filter((j) => j.status === 'running' || j.status === 'starting').length;
+  const onStartNewSession = useCallback(
+    async (input: NewSessionInput) => {
+      const res = await window.av.sessions.newSession({
+        prompt: input.prompt,
+        cwd: input.cwd,
+        agent: input.agent ?? null,
+        model: input.model ?? null,
+        name: input.name ?? null,
+        permissionMode: input.permissionMode ?? null,
+        worktreePath: input.worktreePath ?? null,
+        baseBranch: input.baseBranch ?? null,
+        newBranch: input.newBranch ?? null
+      });
+      // Stay on the dashboard so the user can keep dispatching new work
+      // without bouncing into the detail view. Poll a few times so the
+      // freshly-spawned card appears in the grid as soon as the daemon
+      // registers the worker (~3-5s) and the jsonl starts being written.
+      if (res.sessionId) {
+        for (const delay of [400, 900, 2000, 4000, 6500]) {
+          window.setTimeout(() => reloadSessions(), delay);
+        }
+      }
+    },
+    [reloadSessions]
+  );
 
-  const selectedSession = useMemo(() => {
-    if (selection.kind !== 'session' || !selection.id) return null;
-    return sessionsList.find((s) => s.sessionId === selection.id) ?? null;
-  }, [sessionsList, selection]);
+  const toastNode = toast ? (
+    <div className={`toast ${toast.kind}`} onClick={() => setToast(null)}>
+      {toast.text}
+    </div>
+  ) : null;
 
-  const selectedJob = useMemo(() => {
-    if (selection.kind !== 'job' || !selection.id) return null;
-    return jobs.find((j) => j.jobId === selection.id) ?? null;
-  }, [jobs, selection]);
-
-  const onJobStarted = useCallback((jobId: string) => {
-    setTab('jobs');
-    setSelection({ kind: 'job', id: jobId });
-  }, []);
+  if (selected) {
+    return (
+      <>
+        <UpdateBanner />
+        <FirstRunTutorial />
+        <SessionDetail
+          session={selected}
+          agents={agents}
+          running={running}
+          onBack={() => {
+            setRenames(loadRenames());
+            setSelectedId(null);
+          }}
+          draft={draftsRef.current.get(selected.sessionId)}
+          onDraftChange={(d) => setDraft(selected.sessionId, d)}
+          queue={queues[selected.sessionId] ?? []}
+          onQueueChange={(updater) => setQueue(selected.sessionId, updater)}
+          onForked={(_old, next) => {
+            setSelectedId(next);
+            setToast({
+              kind: 'info',
+              text:
+                '이 에이전트가 CLI에서 이미 실행 중이라 새 분기 세션으로 이어갑니다. 원본은 그대로 두고 새 sid로 진행됩니다.'
+            });
+            window.setTimeout(reloadSessions, 600);
+          }}
+        />
+        {toastNode}
+      </>
+    );
+  }
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <div className="logo">A</div>
-          <span>AgentView</span>
-          <span className="sub">· claude agents 데스크톱 매니저</span>
-        </div>
-        <nav className="tabs" role="tablist">
-          <button
-            role="tab"
-            className={tab === 'sessions' ? 'active' : ''}
-            onClick={() => setTab('sessions')}
-          >
-            🟢 Background Sessions ({activeCount}/{sessionsList.length})
-          </button>
-          <button
-            role="tab"
-            className={tab === 'jobs' ? 'active' : ''}
-            onClick={() => setTab('jobs')}
-          >
-            ⚡ My Jobs ({jobsAliveCount}/{jobs.length})
-          </button>
-        </nav>
-        <span className="spacer" />
-        <span className="live-pill" title="CLI 변경사항이 자동으로 반영됩니다">
-          <span className="dot" />
-          LIVE
-        </span>
-        <button
-          className="btn sm ghost"
-          onClick={() => {
-            reloadSessions();
-            reloadJobs();
-            reloadAgents();
+    <div className="app no-chrome">
+      <UpdateBanner />
+      <FirstRunTutorial />
+      <div className="dashboard">
+        <div
+          className="grid-wrap"
+          ref={(el) => {
+            if (!el) return;
+            // Restore the scroll position from the last time we left the grid.
+            if (gridScrollRef.current) el.scrollTop = gridScrollRef.current;
           }}
-          title="새로고침 (Ctrl+R)"
+          onScroll={(e) => {
+            gridScrollRef.current = (e.target as HTMLDivElement).scrollTop;
+          }}
         >
-          ↻ 새로고침
-        </button>
-      </header>
-
-      <div className={`dashboard ${selection.kind ? 'split' : ''}`}>
-        <div className="grid-wrap">
-          {tab === 'sessions' ? (
-            <SessionsGrid
-              sessions={sessionsList}
-              loading={loadingSessions}
-              selectedId={selection.kind === 'session' ? selection.id : null}
-              onSelect={(s) => setSelection({ kind: 'session', id: s.sessionId })}
-              now={now}
-              flashMap={flash}
-            />
-          ) : (
-            <JobsGrid
-              jobs={jobs}
-              selectedId={selection.kind === 'job' ? selection.id : null}
-              onSelect={(j) => setSelection({ kind: 'job', id: j.jobId })}
-              now={now}
-            />
-          )}
+          <SessionsGrid
+            sessions={sessionsList}
+            loading={loading}
+            selectedId={null}
+            onSelect={(s) => deleteMode ? toggleDeleteSelection(s.sessionId) : setSelectedId(s.sessionId)}
+            now={now}
+            flashMap={flash}
+            filter={filter}
+            onFilterChange={setFilter}
+            renames={renames}
+            deleteMode={deleteMode}
+            selectedForDelete={selectedForDelete}
+            onToggleDelete={toggleDeleteSelection}
+            onToggleDeleteMode={toggleDeleteMode}
+            onPerformBulkDelete={performBulkDelete}
+          />
         </div>
 
-        {selection.kind && (
-          <aside className="detail-pane">
-            {selectedSession ? (
-              <ConversationView session={selectedSession} />
-            ) : selectedJob ? (
-              <JobStreamView job={selectedJob} now={now} />
-            ) : (
-              <div className="empty-detail">
-                <div className="icon">🗂</div>
-                <div>선택한 항목을 찾을 수 없습니다.</div>
-                <button
-                  className="btn sm"
-                  style={{ marginTop: 12 }}
-                  onClick={() => setSelection({ kind: null, id: null })}
-                >
-                  닫기
-                </button>
-              </div>
-            )}
-          </aside>
-        )}
-
-        <InputBar agents={agents} defaultCwd={DEFAULT_CWD} onStarted={onJobStarted} />
+        <InputBar
+          mode="new"
+          agents={agents}
+          defaultCwd={DEFAULT_CWD}
+          draft={newDraft}
+          onDraftChange={setNewDraft}
+          onSend={onStartNewSession}
+        />
       </div>
+
+      {toast && (
+        <div className={`toast ${toast.kind}`} onClick={() => setToast(null)}>
+          {toast.text}
+        </div>
+      )}
     </div>
   );
-}
-
-type SessionFilter = 'all' | 'running' | 'waiting' | 'finished';
-
-function classify(s: BgSession): Exclude<SessionFilter, 'all'> {
-  if (!s.alive || s.status === 'finished' || s.status === 'crashed') return 'finished';
-  if (s.status === 'running') return 'running';
-  return 'waiting';
 }
 
 function SessionsGrid({
@@ -264,7 +475,15 @@ function SessionsGrid({
   selectedId,
   onSelect,
   now,
-  flashMap
+  flashMap,
+  filter,
+  onFilterChange,
+  renames,
+  deleteMode,
+  selectedForDelete,
+  onToggleDelete,
+  onToggleDeleteMode,
+  onPerformBulkDelete
 }: {
   sessions: BgSession[];
   loading: boolean;
@@ -272,52 +491,93 @@ function SessionsGrid({
   onSelect: (s: BgSession) => void;
   now: number;
   flashMap: Map<string, number>;
+  filter: Set<SessionFilter>;
+  onFilterChange: (next: Set<SessionFilter>) => void;
+  renames: Record<string, string>;
+  deleteMode: boolean;
+  selectedForDelete: Set<string>;
+  onToggleDelete: (sid: string) => void;
+  onToggleDeleteMode: () => void;
+  onPerformBulkDelete: () => void;
 }) {
-  const [filter, setFilter] = useState<SessionFilter>('all');
+  const toggle = (key: SessionFilter) => {
+    const next = new Set(filter);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    onFilterChange(next);
+  };
 
   const counts = useMemo(() => {
-    const c = { all: sessions.length, running: 0, waiting: 0, finished: 0 };
+    const c: Record<SessionFilter, number> = {
+      running: 0,
+      waiting: 0,
+      completed: 0,
+      finished: 0
+    };
     for (const s of sessions) c[classify(s)]++;
     return c;
   }, [sessions]);
 
   const filtered = useMemo(() => {
-    if (filter === 'all') return sessions;
-    return sessions.filter((s) => classify(s) === filter);
+    if (filter.size === 0) return sessions;
+    return sessions.filter((s) => filter.has(classify(s)));
   }, [sessions, filter]);
+
+  const tabs: { key: SessionFilter; label: string }[] = [
+    { key: 'running', label: '실행 중' },
+    { key: 'waiting', label: '대기' },
+    { key: 'completed', label: '완료' },
+    { key: 'finished', label: '종료' }
+  ];
 
   return (
     <>
       <div className="section-head">
-        <h2>
-          백그라운드 세션 <span className="count">{filtered.length}개</span>
-        </h2>
-        <div className="filters">
+        <div className="section-head-left" style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <h2>
+            백그라운드 에이전트 <span className="count">{filtered.length}개</span>
+          </h2>
           <button
-            className={`btn sm ${filter === 'all' ? 'primary' : 'ghost'}`}
-            onClick={() => setFilter('all')}
-          >전체 {counts.all}</button>
-          <button
-            className={`btn sm ${filter === 'running' ? 'primary' : 'ghost'}`}
-            onClick={() => setFilter('running')}
-          >실행 중 {counts.running}</button>
-          <button
-            className={`btn sm ${filter === 'waiting' ? 'primary' : 'ghost'}`}
-            onClick={() => setFilter('waiting')}
-          >대기 {counts.waiting}</button>
-          <button
-            className={`btn sm ${filter === 'finished' ? 'primary' : 'ghost'}`}
-            onClick={() => setFilter('finished')}
-          >종료 {counts.finished}</button>
+            type="button"
+            className={`btn sm icon-only ${deleteMode ? 'danger' : 'ghost'}`}
+            onClick={onToggleDeleteMode}
+            title={deleteMode ? '삭제 모드 종료' : '여러 세션 선택해 일괄 삭제'}
+            aria-label={deleteMode ? '삭제 취소' : '삭제 모드'}
+          >
+            {deleteMode ? '✕' : '🗑'}
+          </button>
+          {deleteMode && (
+            <button
+              type="button"
+              className="btn sm danger"
+              disabled={selectedForDelete.size === 0}
+              onClick={onPerformBulkDelete}
+              title="선택된 세션을 모두 삭제합니다"
+            >
+              삭제 완료 ({selectedForDelete.size})
+            </button>
+          )}
+        </div>
+        <div className="filters" title="여러 탭을 동시에 선택할 수 있습니다">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              className={`btn sm ${filter.has(t.key) ? 'primary' : 'ghost'}`}
+              onClick={() => toggle(t.key)}
+              aria-pressed={filter.has(t.key)}
+            >
+              {t.label} {counts[t.key]}
+            </button>
+          ))}
         </div>
       </div>
       {loading && <div className="empty-grid">로딩 중…</div>}
       {!loading && filtered.length === 0 && (
         <div className="empty-grid">
           <div className="icon">🌙</div>
-          <div>아직 백그라운드 세션이 없습니다.</div>
+          <div>표시할 에이전트가 없습니다.</div>
           <div style={{ fontSize: 12, marginTop: 8 }}>
-            아래 입력창에서 작업을 보내거나 터미널에서 <code>claude</code> 로 새 세션을 시작하세요.
+            아래 입력창에 작업을 적으면 새 백그라운드 에이전트가 시작됩니다.
           </div>
         </div>
       )}
@@ -330,67 +590,13 @@ function SessionsGrid({
             onSelect={() => onSelect(s)}
             now={now}
             flash={flashMap.has(s.sessionId)}
+            overrideName={renames[s.sessionId] || undefined}
+            deleteMode={deleteMode}
+            checkedForDelete={selectedForDelete.has(s.sessionId)}
+            onToggleDelete={() => onToggleDelete(s.sessionId)}
           />
         ))}
       </div>
     </>
   );
-}
-
-function JobsGrid({
-  jobs,
-  selectedId,
-  onSelect,
-  now
-}: {
-  jobs: JobInfo[];
-  selectedId: string | null;
-  onSelect: (j: JobInfo) => void;
-  now: number;
-}) {
-  return (
-    <>
-      <div className="section-head">
-        <h2>
-          내가 시작한 작업 <span className="count">{jobs.length}개</span>
-        </h2>
-      </div>
-      {jobs.length === 0 ? (
-        <div className="empty-grid">
-          <div className="icon">✨</div>
-          <div>아직 시작한 작업이 없습니다.</div>
-          <div style={{ fontSize: 12, marginTop: 8 }}>
-            아래 입력창에 프롬프트를 입력하고 Ctrl+Enter 를 누르세요.
-          </div>
-        </div>
-      ) : (
-        <div className="cards">
-          {jobs.map((j) => (
-            <JobCard
-              key={j.jobId}
-              job={j}
-              selected={j.jobId === selectedId}
-              onSelect={() => onSelect(j)}
-              now={now}
-            />
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-const MAX_OUTPUT_CHARS_CLIENT = 256 * 1024;
-function appendClipped(prev: string, chunk: string): string {
-  const next = prev + chunk;
-  if (next.length <= MAX_OUTPUT_CHARS_CLIENT) return next;
-  return next.slice(next.length - MAX_OUTPUT_CHARS_CLIENT);
-}
-
-function mergeJob(prev: JobInfo, next: JobInfo): JobInfo {
-  return {
-    ...next,
-    output: next.output || prev.output,
-    errorOutput: next.errorOutput || prev.errorOutput
-  };
 }

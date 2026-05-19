@@ -1,7 +1,7 @@
 {
   "name": "visualagents",
-  "version": "0.1.0",
-  "description": "AgentView — Claude Code /agents 화면 데스크톱 앱 (한글·UI 개선)",
+  "version": "1.0.0",
+  "description": "AgentView \u2014 Claude Code /agents \ud654\uba74 \ub370\uc2a4\ud06c\ud1b1 \uc571 (\ud55c\uae00\u00b7UI \uac1c\uc120)",
   "main": "out/main/index.js",
   "author": "VisualAgents",
   "license": "MIT",
@@ -42,13 +42,27 @@
     "files": [
       "out/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "resources/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      }
+    ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "resources/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico"
+    },
+    "publish": null
   }
 }

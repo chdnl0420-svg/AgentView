@@ -46,9 +46,20 @@ export function flattenLine(line: string): ConversationMessage[] {
     if (type === 'last-prompt' || type === 'agent-setting' || type === 'permission-mode') {
       return [];
     }
+    // NOTE: an earlier version dropped every line with `isMeta: true`, but
+    // some claude builds also flag legitimate slash-command-driven user
+    // messages that way. Hiding everything broke the chat. Keep the line —
+    // the renderer's cleanUserMessage + isEmptyUserMessage strips actual
+    // caveat/hook noise just from the text content.
     const uuid = String(obj.uuid ?? obj.leafUuid ?? randomUUID());
     const parentUuid = obj.parentUuid as string | undefined;
-    const ts = obj.timestamp as number | undefined;
+    const rawTs = obj.timestamp;
+    const ts: number | undefined =
+      typeof rawTs === 'number' && Number.isFinite(rawTs)
+        ? rawTs
+        : typeof rawTs === 'string' && Number.isFinite(Date.parse(rawTs))
+        ? Date.parse(rawTs)
+        : undefined;
     const msg = obj.message as
       | { role?: string; content?: unknown; model?: string; stop_reason?: string }
       | undefined;

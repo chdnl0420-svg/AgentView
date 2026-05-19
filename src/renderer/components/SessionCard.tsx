@@ -7,33 +7,63 @@ interface SessionCardProps {
   onSelect: () => void;
   now: number;
   flash?: boolean;
+  overrideName?: string;
+  deleteMode?: boolean;
+  checkedForDelete?: boolean;
+  onToggleDelete?: () => void;
 }
 
-export function SessionCard({ session, selected, onSelect, now, flash }: SessionCardProps) {
+export function SessionCard({
+  session,
+  selected,
+  onSelect,
+  now,
+  flash,
+  overrideName,
+  deleteMode,
+  checkedForDelete,
+  onToggleDelete
+}: SessionCardProps) {
   const snippet =
     session.lastAssistantText ||
     session.lastUserText ||
     (session.alive ? '대기 중…' : '세션 종료됨');
+  const handleClick = () => {
+    if (deleteMode && onToggleDelete) onToggleDelete();
+    else onSelect();
+  };
   return (
     <div
-      className={`session-card ${selected ? 'selected' : ''} ${flash ? 'flash' : ''}`}
-      onClick={onSelect}
+      className={`session-card ${selected ? 'selected' : ''} ${flash ? 'flash' : ''} ${deleteMode ? 'delete-mode' : ''} ${checkedForDelete ? 'checked' : ''}`}
+      onClick={handleClick}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onSelect();
+          handleClick();
         }
       }}
     >
+      {deleteMode && (
+        <input
+          type="checkbox"
+          className="card-delete-check"
+          checked={!!checkedForDelete}
+          onChange={() => onToggleDelete?.()}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="삭제 선택"
+        />
+      )}
       <span
         className={`pulse ${session.alive ? 'alive' : 'dead'}`}
         title={session.alive ? '실행 중' : '종료'}
       />
       <div className="card-head">
         <span className={`status-tag ${session.status}`}>{statusLabel(session.status)}</span>
-        <div className="card-title">{session.name || session.agent || '이름 없음'}</div>
+        <div className="card-title">
+          {overrideName || session.name || session.agent || '이름 없음'}
+        </div>
       </div>
       <div className="card-cwd" title={session.cwd}>{shortCwd(session.cwd, 64)}</div>
       <div className={`card-snippet ${snippet ? '' : 'empty'}`}>{snippet}</div>
@@ -50,8 +80,9 @@ function statusLabel(status: BgSession['status']): string {
     case 'running': return '실행 중';
     case 'idle': return '대기';
     case 'waiting': return '입력 대기';
-    case 'finished': return '종료됨';
+    case 'completed': return '완료';
+    case 'finished': return '종료';
     case 'crashed': return '오류';
-    default: return '알 수 없음';
+    default: return '대기';
   }
 }

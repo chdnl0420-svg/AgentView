@@ -1,4 +1,11 @@
-export type SessionStatus = 'running' | 'idle' | 'waiting' | 'finished' | 'crashed' | 'unknown';
+export type SessionStatus =
+  | 'running'
+  | 'idle'
+  | 'waiting'
+  | 'finished'
+  | 'crashed'
+  | 'completed'
+  | 'unknown';
 
 export interface BgSession {
   pid: number;
@@ -73,34 +80,78 @@ export interface AgentInfo {
   body: string;
 }
 
-export interface NewJobInput {
+export type PermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'bypassPermissions'
+  | 'plan';
+
+export interface NewSessionInput {
   prompt: string;
   cwd: string;
   agent?: string | null;
   model?: string | null;
   name?: string | null;
+  /** Claude permission mode the new session boots with. Passed via
+   *  `--permission-mode` to claude (and through the daemon dispatch).
+   *  Falls back to 'default' if unset. */
+  permissionMode?: PermissionMode | null;
+  /** Optional new git worktree path. When set, AgentView creates the worktree
+   *  before spawning claude inside it. */
+  worktreePath?: string | null;
+  /** Branch to base the new worktree on. Required when `worktreePath` is set. */
+  baseBranch?: string | null;
+  /** Optional new branch name to create inside the worktree. */
+  newBranch?: string | null;
 }
 
-export interface JobEvent {
-  jobId: string;
-  type: 'stdout' | 'stderr' | 'spawn' | 'exit' | 'error';
-  data?: string;
-  exitCode?: number | null;
-  ts: number;
-}
-
-export interface JobInfo {
-  jobId: string;
-  pid: number | null;
+export interface ResumeMessageInput {
+  sessionId: string;
   prompt: string;
   cwd: string;
-  agent: string | null;
-  model: string | null;
-  name: string | null;
+  agent?: string | null;
+  model?: string | null;
+  /** Claude permission mode. For an existing alive session this is mostly a
+   *  no-op (permission is locked at spawn), but it's applied when the runner
+   *  needs to respawn a dead session. */
+  permissionMode?: PermissionMode | null;
+}
+
+export type ClaudeRunEvent =
+  | { sessionId: string; type: 'spawn'; pid: number | null; ts: number }
+  | { sessionId: string; type: 'exit'; exitCode: number | null; stderr?: string; ts: number }
+  | { sessionId: string; type: 'error'; message: string; ts: number }
+  | { sessionId: string; type: 'busy'; ts: number };
+
+export interface RunningSessionInfo {
+  sessionId: string;
+  pid: number;
   startedAt: number;
-  finishedAt: number | null;
-  exitCode: number | null;
-  status: 'starting' | 'running' | 'completed' | 'failed' | 'cancelled';
-  output: string;
-  errorOutput: string;
+}
+
+export interface SlashCommandEntry {
+  name: string;
+  scope: 'user' | 'project' | 'builtin';
+  description: string;
+  filePath: string;
+}
+
+export interface GitBranchesResult {
+  /** true when `cwd` is inside a git repository. */
+  isRepo: boolean;
+  /** Currently-checked-out branch (or '' if detached HEAD). */
+  current: string;
+  /** Local branches (without `refs/heads/` prefix). */
+  branches: string[];
+  /** When this cwd is itself a worktree, the linked main repo path. */
+  rootCwd?: string;
+}
+
+export interface PermissionPromptEvent {
+  sessionId: string;
+  /** Stable id of the prompt (hash of question + options). Use for dedupe. */
+  id: string;
+  question: string;
+  options: Array<{ key: string; label: string }>;
+  detectedAt: number;
 }
