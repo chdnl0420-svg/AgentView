@@ -55,8 +55,55 @@ function isEmptyDeadSession(s: BgSession): boolean {
   return false;
 }
 
+// Local placeholder for a brand-new agent we just dispatched. The daemon takes
+// 2-5 s to write ~/.claude/jobs/<short>/state.json (the only source the
+// sessions scanner reads), so without this the user clicks "▶ 새 작업 시작"
+// and stares at an unchanged grid until the worker lands.
+interface PendingSession {
+  tempId: string;
+  realSessionId: string | null;
+  startedAt: number;
+  prompt: string;
+  cwd: string;
+  agent: string;
+  name: string;
+}
+
+const PENDING_PREFIX = 'pending-';
+const PENDING_MAX_LIFETIME_MS = 45_000;
+
+function makeTempId(): string {
+  const rnd =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2);
+  return `${PENDING_PREFIX}${rnd}`;
+}
+
+function pendingToBgSession(p: PendingSession): BgSession {
+  return {
+    pid: 0,
+    sessionId: p.realSessionId || p.tempId,
+    cwd: p.cwd,
+    startedAt: p.startedAt,
+    updatedAt: p.startedAt,
+    kind: 'bg',
+    entrypoint: 'pending',
+    name: p.name,
+    agent: p.agent,
+    jobId: (p.realSessionId || p.tempId).slice(0, 8),
+    status: 'running',
+    alive: true,
+    metaPath: '',
+    conversationPath: null,
+    conversationSize: 0,
+    lastUserText: p.prompt
+  };
+}
+
 export default function App() {
   const [scan, setScan] = useState<ScanSessionsResult | null>(null);
+  const [pending, setPending] = useState<PendingSession[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [running, setRunning] = useState<RunningSessionInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -322,10 +369,34 @@ export default function App() {
     return () => window.clearTimeout(id);
   }, [toast]);
 
-  const sessionsList = useMemo(
-    () => (scan?.sessions ?? []).filter((s) => !isEmptyDeadSession(s)),
-    [scan]
-  );
+  const sessionsList = useMemo(() => {
+    const real = (scan?.sessions ?? []).filter((s) => !isEmptyDeadSession(s));
+    if (pending.length === 0) return real;
+    const realIds = new Set(real.map((s) => s.sessionId));
+    // Hide a placeholder once the daemon-registered card with the same
+    // sessionId has actually landed in the scan — that's the seamless handoff.
+    const placeholders = pending
+      .filter((p) => !(p.realSessionId && realIds.has(p.realSessionId)))
+      .map(pendingToBgSession);
+    return [...placeholders, ...real];
+  }, [scan, pending]);
+
+  // Drop pending entries whose real session has appeared in scan, or that have
+  // been hanging around past the max lifetime (safety net so a failed dispatch
+  // never leaves a "시작 중…" card stuck forever).
+  useEffect(() => {
+    if (pending.length === 0) return;
+    const scannedIds = new Set((scan?.sessions ?? []).map((s) => s.sessionId));
+    const now = Date.now();
+    setPending((prev) => {
+      const next = prev.filter((p) => {
+        if (p.realSessionId && scannedIds.has(p.realSessionId)) return false;
+        if (now - p.startedAt > PENDING_MAX_LIFETIME_MS) return false;
+        return true;
+      });
+      return next.length === prev.length ? prev : next;
+    });
+  }, [scan, pending]);
   // Look up the selected session in the raw scan (not the filtered grid)
   // so that brand-new sessions can show up in the detail view even before
   // the next sessions watcher tick pulls them into the visible filter.
@@ -354,25 +425,55 @@ export default function App() {
 
   const onStartNewSession = useCallback(
     async (input: NewSessionInput) => {
-      const res = await window.av.sessions.newSession({
-        prompt: input.prompt,
-        cwd: input.cwd,
-        agent: input.agent ?? null,
-        model: input.model ?? null,
-        name: input.name ?? null,
-        permissionMode: input.permissionMode ?? null,
-        worktreePath: input.worktreePath ?? null,
-        baseBranch: input.baseBranch ?? null,
-        newBranch: input.newBranch ?? null
-      });
+      // Drop an optimistic placeholder card on the grid the moment the user
+      // clicks "▶ 새 작업 시작". Without this they sit in front of an
+      // unchanged grid for 2-5 s while the daemon-spawned worker writes
+      // ~/.claude/jobs/<short>/state.json — the only thing the scanner reads.
+      const tempId = makeTempId();
+      const displayName = (input.name?.trim() || input.prompt.trim().split(/\r?\n/)[0] || '새 작업').slice(0, 60);
+      setPending((prev) => [
+        {
+          tempId,
+          realSessionId: null,
+          startedAt: Date.now(),
+          prompt: input.prompt,
+          cwd: input.cwd,
+          agent: input.agent || 'claude',
+          name: displayName
+        },
+        ...prev
+      ]);
+      let res: { sessionId: string | null } | null = null;
+      try {
+        res = await window.av.sessions.newSession({
+          prompt: input.prompt,
+          cwd: input.cwd,
+          agent: input.agent ?? null,
+          model: input.model ?? null,
+          name: input.name ?? null,
+          permissionMode: input.permissionMode ?? null,
+          worktreePath: input.worktreePath ?? null,
+          baseBranch: input.baseBranch ?? null,
+          newBranch: input.newBranch ?? null
+        });
+      } catch (err) {
+        setPending((prev) => prev.filter((p) => p.tempId !== tempId));
+        throw err;
+      }
       // Stay on the dashboard so the user can keep dispatching new work
       // without bouncing into the detail view. Poll a few times so the
       // freshly-spawned card appears in the grid as soon as the daemon
       // registers the worker (~3-5s) and the jsonl starts being written.
-      if (res.sessionId) {
+      if (res && res.sessionId) {
+        const realSessionId = res.sessionId;
+        setPending((prev) =>
+          prev.map((p) => (p.tempId === tempId ? { ...p, realSessionId } : p))
+        );
         for (const delay of [400, 900, 2000, 4000, 6500]) {
           window.setTimeout(() => reloadSessions(), delay);
         }
+      } else {
+        setPending((prev) => prev.filter((p) => p.tempId !== tempId));
       }
     },
     [reloadSessions]
@@ -436,7 +537,21 @@ export default function App() {
             sessions={sessionsList}
             loading={loading}
             selectedId={null}
-            onSelect={(s) => deleteMode ? toggleDeleteSelection(s.sessionId) : setSelectedId(s.sessionId)}
+            onSelect={(s) => {
+              if (deleteMode) {
+                toggleDeleteSelection(s.sessionId);
+                return;
+              }
+              // Pre-realSessionId placeholders have a temp id that nothing on
+              // disk knows about — opening detail would render an empty shell.
+              // The card swaps to the real id automatically as soon as
+              // newSession resolves; until then a click is a no-op.
+              if (s.sessionId.startsWith(PENDING_PREFIX)) {
+                setToast({ kind: 'info', text: '에이전트가 시작 중입니다. 잠시만 기다려주세요.' });
+                return;
+              }
+              setSelectedId(s.sessionId);
+            }}
             now={now}
             flashMap={flash}
             filter={filter}
