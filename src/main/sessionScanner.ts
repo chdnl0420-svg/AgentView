@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { BgSession, ScanSessionsResult, SessionStatus } from '@shared/types';
+import { ensureHiddenLoaded } from './hiddenSessions';
 
 const SESSIONS_DIR = join(homedir(), '.claude', 'sessions');
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
@@ -499,6 +500,12 @@ export async function scanSessions(
     /* dir doesn't exist on a fresh system */
   }
   const roster = await readDaemonRoster();
+  // UI-side safety net: sessions the user deleted via AgentView. The claude
+  // daemon respawns workers (it tracks an attempt counter and re-creates
+  // jobs/<short>/ after we wipe it), so even after we tear down the daemon
+  // entry the session can reappear. Filter those out so deletion sticks
+  // even when the daemon ignores our removal.
+  const hidden = await ensureHiddenLoaded();
   for (const short of shorts) {
     if (short.endsWith('.json')) continue; // pins.json etc.
     let state = await readJobState(short);
@@ -511,6 +518,7 @@ export async function scanSessions(
       state = recallState(short);
       if (!state) continue;
     }
+    if (state.sessionId && hidden.has(state.sessionId)) continue;
     const session = await jobStateToSession(short, state, roster);
     if (!session) continue;
     result.sessions.push(session);

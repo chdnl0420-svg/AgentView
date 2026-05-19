@@ -19,6 +19,7 @@ import { parseAgentFile } from './frontmatter';
 import { LiveWatcher } from './liveWatcher';
 import { listBranches, suggestWorktreePath } from './git';
 import { ensureOwnedLoaded } from './ownedSessions';
+import { markHidden } from './hiddenSessions';
 import type {
   AgentInfo,
   NewSessionInput,
@@ -389,33 +390,73 @@ export function registerIpc(): void {
   ipcMain.handle(IPC.AppVersion, async () => app.getVersion());
   ipcMain.handle(IPC.UsageFetch, async () => fetchUsage());
   ipcMain.handle(IPC.SessionsDelete, async (_e, sessionIds: string[]) => {
-    // Delete bi-directionally: AgentView deletes -> Claude agents reflects.
-    // Steps per session: (1) kill alive PID if any, (2) wipe the
-    // ~/.claude/jobs/<short>/ directory which is the source `claude agents`
-    // reads, (3) drop from agentview-owned. The reverse direction (CLI
-    // deletes via Ctrl+X) flows automatically through the jobs watcher.
+    // Layered deletion. The claude daemon respawns workers (attempt counter
+    // visible in roster.json) and re-creates jobs/<short>/ after we wipe it,
+    // so a bare "kill PID + rm dir" loses the race within seconds. We try
+    // every layer the daemon could read from, and then mark the sessionId
+    // as hidden so the UI ignores it even if the daemon brings it back.
+    //
+    //   A) Remove daemon spawn-cues: dispatch/<short>.json + pty-pids/<short>.pid
+    //   B) Drop the worker from roster.json so the supervisor can't see it
+    //   C) Kill the live worker PID, then wipe jobs/<short>/
+    //   D) Record the sessionId in agentview-hidden.json as the UI safety net
+    const claudeDir = join(homedir(), '.claude');
+    const daemonDir = join(claudeDir, 'daemon');
+    const jobsDir = join(claudeDir, 'jobs');
+    const rosterPath = join(daemonDir, 'roster.json');
     const deleted: string[] = [];
     const failed: Array<{ sessionId: string; reason: string }> = [];
+
+    // Read the roster once; we'll rewrite it after collecting all PIDs.
+    let roster: { workers?: Record<string, { pid?: number }> } | null = null;
+    try {
+      const raw = await fs.readFile(rosterPath, 'utf8');
+      roster = JSON.parse(raw);
+    } catch { /* roster missing */ }
+
     for (const sid of sessionIds) {
       try {
         const short = sid.slice(0, 8);
-        // Kill alive PID (best-effort)
-        try {
-          const rosterRaw = await fs.readFile(join(homedir(), '.claude', 'daemon', 'roster.json'), 'utf8');
-          const roster = JSON.parse(rosterRaw) as { workers?: Record<string, { pid?: number }> };
-          const pid = roster.workers?.[short]?.pid;
-          if (pid && pid > 0) {
-            try { process.kill(pid, 'SIGTERM'); } catch { /* dead or no perm */ }
-          }
-        } catch { /* roster missing */ }
-        // Wipe jobs/<short>/
-        const jobDir = join(homedir(), '.claude', 'jobs', short);
-        await fs.rm(jobDir, { recursive: true, force: true });
+
+        // D) Mark hidden first — scanSessions filters this immediately so the
+        // card disappears from the grid even if a respawn races us.
+        await markHidden(sid);
+
+        // A) Remove daemon spawn-cues so a respawn can't reconstruct the
+        // worker from a stale dispatch file or pid pin.
+        await fs.rm(join(daemonDir, 'dispatch', `${short}.json`), { force: true });
+        await fs.rm(join(daemonDir, 'pty-pids', `${short}.pid`), { force: true });
+
+        // B) Drop from in-memory roster snapshot (written back below).
+        const pid = roster?.workers?.[short]?.pid;
+        if (roster?.workers && short in roster.workers) {
+          delete roster.workers[short];
+        }
+
+        // C) Kill the live worker. Windows treats SIGTERM as TerminateProcess
+        // for non-console targets, which is what we want here. ESRCH/EPERM
+        // means the PID is already gone.
+        if (pid && pid > 0) {
+          try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ }
+        }
+        await fs.rm(join(jobsDir, short), { recursive: true, force: true });
+
         deleted.push(sid);
       } catch (err) {
         failed.push({ sessionId: sid, reason: err instanceof Error ? err.message : String(err) });
       }
     }
+
+    // Write the roster back once at the end so concurrent writers (the
+    // daemon itself) overlap with us minimally. If the daemon rewrites the
+    // file before us we lose the edit, but the hidden list still blocks
+    // the card from reappearing.
+    if (roster) {
+      try {
+        await fs.writeFile(rosterPath, JSON.stringify(roster, null, 2), 'utf8');
+      } catch { /* daemon may have rewritten — hidden list still protects UI */ }
+    }
+
     return { ok: failed.length === 0, deleted, failed };
   });
   ipcMain.handle(IPC.ShellOpenPath, async (_e, p: string) => {
