@@ -87,6 +87,15 @@ const api: AgentViewApi = {
     branches: (cwd) => ipcRenderer.invoke(IPC.GitBranches, cwd),
     defaultWorktreePath: (cwd, suffix) =>
       ipcRenderer.invoke(IPC.GitDefaultWorktreePath, cwd, suffix)
+  },
+  workspace: {
+    list: () => ipcRenderer.invoke(IPC.WorkspaceList),
+    read: (sessionId) => ipcRenderer.invoke(IPC.WorkspaceRead, sessionId),
+    exportReport: (sessionId) => ipcRenderer.invoke(IPC.WorkspaceExportReport, sessionId),
+    openRoot: () => ipcRenderer.invoke(IPC.WorkspaceOpenRoot)
+  },
+  claude: {
+    status: (force?: boolean) => ipcRenderer.invoke(IPC.ClaudeStatus, force ?? false)
   }
 };
 

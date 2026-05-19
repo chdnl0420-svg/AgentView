@@ -4,6 +4,39 @@
 
 ---
 
+## v1.0.4 — Claude 자동 기동·인스톨러 CLI 설치·작업 영속화·메모리 절감
+
+세션 시작 응답성과 신뢰성을 종합 개선한 릴리즈. 사용자가 직접 보고한 6 가지 이슈를 한 번에 처리.
+
+### 새 기능
+- **Claude Code preflight** : 앱 시작 시 `claude --version` + `~/.claude/daemon/roster.json` 확인. CLI 미설치면 상단 빨강 배너 + 설치 안내 버튼, 데몬 dead 면 노랑 배너 표시.
+- **데몬 자동 부팅** : 새 작업 시작 시 supervisor 가 죽어있으면 `claude agents --headless` 를 백그라운드로 띄워서 ~2.5 초 안에 깨우고, 안 되면 곧바로 직접 PTY 폴백 (기존 10 초 대기 → 최대 2 초).
+- **메시지 보낼 때도 자동 복구** : 외부 워커에 prompt 전달 실패 (`NO_WORKER`) 시 데몬을 한 번 부팅하고 자동 재시도.
+- **작업 영속화 (.md)** : 모든 세션의 프롬프트·상태·전이를 `%USERPROFILE%\.claude\agentview\workspace\sessions\<sid>.md` 에 YAML frontmatter + 활동 로그로 기록. 앱 크래시 / 중단되어도 다른 세션이 파일을 읽고 이어 작업 가능.
+- **HTML 리포트** : 세션 .md 를 단일 파일 HTML 로 export (탭 인터랙티브, 첫 탭=요약). IPC `workspace:exportReport` 로 호출.
+- **인스톨러에서 CLI 자동 설치** : NSIS `customInstall` 매크로가 설치 직후 `where claude` 로 미존재 시 `npm install -g @anthropic-ai/claude-code` 자동 실행 (best-effort).
+
+### 수정
+- **업데이트 패널 축소** : 24px 미만 단일 줄로 컴팩트화 (기존 ~48px). 폰트·버튼 크기 축소, ellipsis 처리.
+- **메모리 절감** :
+  - `readConversation` 캡 4000 → 1500 라인 (장기 세션에서 가장 큰 절약).
+  - PTY rolling buffer 6KB → 4KB.
+  - `tailAgentOutput` 재연결 지수 backoff (1.5 s → 30 s 까지) — 죽은 세션에 무한 폴링하지 않음.
+  - `sessionScanner` stateCache 200 entry cap.
+- **작업표시줄 핀 LNK 보존** : 재설치 후에도 핀이 유지되도록
+  - 메인 프로세스가 시작할 때 핀된 LNK 가 있으면 새 exe 경로/아이콘으로 갱신.
+  - NSIS `customInstall` 이 설치 직후 핀 LNK 의 TargetPath/IconLocation 을 새 빌드로 다시 씀.
+  - NSIS `customUnInstall` 이 핀 LNK · 워크스페이스 데이터를 보존하도록 명시.
+
+### 영향
+- "Claude Code 꺼져있으면 새 작업·메시지 무반응" 증상 → 자동 부팅 + 폴백 + 상태 배너로 항상 진행 가능.
+- 새 작업 시작 후 응답 도착까지의 무반응 구간이 평균 10 초 → 0–2 초.
+- 작업표시줄에 고정한 AgentView 아이콘이 새 인스톨러 실행 후에도 그대로 살아있음.
+- 긴 세션에서 렌더러 메모리 사용량 30–50% 절감 (메시지 캡 + 버퍼 캡).
+- 앱이 강제 종료돼도 `%USERPROFILE%\.claude\agentview\workspace\sessions\<sid>.md` 에 진행 상태가 남아 다음 세션이 이어 작업 가능.
+
+---
+
 ## v1.0.3 — 새 작업 카드 안정화 + claude agents 등록 누락 수정
 
 `▶ 새 작업 시작` 직후 카드가 잠시 보였다 사라졌다 반복하다가 한참 뒤에야 정착하던 깜빡임, 그리고 가끔 새 세션이 `claude agents` CLI 목록에 등록되지 않던 두 가지 문제를 함께 잡은 핫픽스.

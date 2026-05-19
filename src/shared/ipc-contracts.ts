@@ -47,7 +47,13 @@ export const IPC = {
   SavePastedImage: 'picker:savePastedImage',
 
   GitBranches: 'git:branches',
-  GitDefaultWorktreePath: 'git:defaultWorktreePath'
+  GitDefaultWorktreePath: 'git:defaultWorktreePath',
+
+  WorkspaceList: 'workspace:list',
+  WorkspaceRead: 'workspace:read',
+  WorkspaceExportReport: 'workspace:exportReport',
+  WorkspaceOpenRoot: 'workspace:openRoot',
+  ClaudeStatus: 'claude:status'
 } as const;
 
 export const EVT = {
@@ -128,6 +134,29 @@ export interface AgentViewApi {
   git: {
     branches(cwd: string): Promise<GitBranchesResult>;
     defaultWorktreePath(cwd: string, branchOrSuffix: string): Promise<string>;
+  };
+  workspace: {
+    list(): Promise<Array<{
+      sessionId: string;
+      status: 'pending' | 'running' | 'completed' | 'crashed';
+      prompt: string;
+      cwd: string;
+      agent: string;
+      updatedAt: number;
+      filePath: string;
+    }>>;
+    read(sessionId: string): Promise<string | null>;
+    exportReport(sessionId: string): Promise<{ ok: boolean; path?: string; reason?: string }>;
+    openRoot(): Promise<void>;
+  };
+  claude: {
+    status(force?: boolean): Promise<{
+      cliPath: string | null;
+      cliVersion: string | null;
+      daemonAlive: boolean;
+      supervisorPid: number | null;
+      checkedAt: number;
+    }>;
   };
 }
 

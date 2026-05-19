@@ -50,9 +50,17 @@ async function readJobState(short: string): Promise<ClaudeJobState | null> {
 // for up to STATE_GRACE_MS so a transient atomic-rename window doesn't
 // make the card disappear. Cleared after the grace expires.
 const STATE_GRACE_MS = 6000;
+const STATE_CACHE_MAX = 200;
 const stateCache = new Map<string, { state: ClaudeJobState; asOf: number }>();
 function rememberState(short: string, state: ClaudeJobState): void {
   stateCache.set(short, { state, asOf: Date.now() });
+  // Cap the cache so a long-lived AgentView session that has touched many
+  // job shorts doesn't grow this map unboundedly. The oldest entry is the
+  // least useful — by definition past grace, so it's safe to drop.
+  if (stateCache.size > STATE_CACHE_MAX) {
+    const firstKey = stateCache.keys().next().value;
+    if (firstKey !== undefined) stateCache.delete(firstKey);
+  }
 }
 function recallState(short: string): ClaudeJobState | null {
   const hit = stateCache.get(short);

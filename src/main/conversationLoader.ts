@@ -5,7 +5,13 @@ import { randomUUID } from 'node:crypto';
 import type { ConversationFile, ConversationMessage } from '@shared/types';
 
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
-const MAX_LINES = 4000;
+// Cap the in-memory conversation snapshot the renderer holds. Long sessions
+// with hundreds of tool_use/tool_result rows easily exceed 4000 lines and
+// the renderer ends up DOM-mounting every one — by far the biggest
+// per-session memory hog. 1500 is plenty for chat context (claude itself
+// effectively keeps about the same in its prompt) and lets `tailConversation`
+// stream the live tail on top.
+const MAX_LINES = 1500;
 
 export async function findFileBySessionId(sessionId: string): Promise<string | null> {
   try {
