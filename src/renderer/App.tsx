@@ -638,9 +638,10 @@ export default function App() {
   if (viewMode === 'single') {
     return (
       <div className="app no-chrome">
+        <WindowChrome />
         <UpdateBanner />
         {claudeStatusBanner}
-        <FirstRunTutorial />
+        <SpotlightTour />
         <div className="dashboard single">
           <SessionList
             sessions={sessionsList}
