@@ -1,6 +1,6 @@
 {
   "name": "visualagents",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "AgentView — Claude Code /agents 화면 데스크톱 앱 (한글·UI 개선)",
   "main": "out/main/index.js",
   "author": "VisualAgents",
