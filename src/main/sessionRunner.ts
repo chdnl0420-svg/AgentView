@@ -40,7 +40,58 @@ const FALLBACK_DELIVER_MS = 12000;
 const DAEMON_DIR = join(homedir(), '.claude', 'daemon');
 const DISPATCH_DIR = join(DAEMON_DIR, 'dispatch');
 const ROSTER_PATH = join(DAEMON_DIR, 'roster.json');
+const JOBS_DIR = join(homedir(), '.claude', 'jobs');
 const DISPATCH_POLL_MS = 200;
+
+/**
+ * Derive a stable session display name from the explicit `args.name` or, if
+ * absent, the first meaningful line of the user's prompt. Skipping code
+ * fences and the standard "Continue from where you left off." resume blurb
+ * keeps the title from blinking through the 8-char hex fallback while the
+ * daemon settles. The first sentence/clause is preferred so a "Plan v3.
+ * Implement…" prompt yields "Plan v3" rather than "Plan v3. Implement…".
+ */
+export function deriveSessionName(
+  explicitName: string | null | undefined,
+  prompt: string | null | undefined
+): string | null {
+  const explicit = (explicitName ?? '').trim();
+  if (explicit) return explicit.slice(0, 60);
+  const body = (prompt ?? '').replace(/\r\n/g, '\n');
+  if (!body.trim()) return null;
+  // Walk line by line, skipping code fences and resume placeholders.
+  const lines = body.split('\n');
+  let inFence = false;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (/^continue from where you left off\.?$/i.test(line)) continue;
+    if (/^\[?attached files\]?/i.test(line)) continue;
+    // Strip leading bullet/heading markers so "## Plan" or "- todo" don't
+    // bleed into the title.
+    const stripped = line.replace(/^(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s+)/, '').trim();
+    if (!stripped) continue;
+    // Prefer cutting at the first sentence-ending punctuation so the title
+    // is a self-contained phrase rather than a sliced clause.
+    const sentenceMatch = /[.!?。！？]/.exec(stripped);
+    let candidate = stripped;
+    if (sentenceMatch && sentenceMatch.index >= 4 && sentenceMatch.index <= 30) {
+      candidate = stripped.slice(0, sentenceMatch.index).trim();
+    } else if (stripped.length > 32) {
+      // Cut at the last whitespace before char 32 to avoid mid-word breaks.
+      const slice = stripped.slice(0, 32);
+      const lastSpace = slice.lastIndexOf(' ');
+      candidate = (lastSpace >= 12 ? slice.slice(0, lastSpace) : slice).trim();
+    }
+    if (candidate) return candidate.slice(0, 60);
+  }
+  return null;
+}
 // ~10 seconds. The old 2.4 s budget was too tight on slow machines and would
 // silently fall back to Strategy B (direct PTY spawn), which produces a
 // kind:"interactive" session that never appears in `claude agents`. Waiting
@@ -70,17 +121,23 @@ async function dispatchToDaemon(args: {
   maxTries?: number;
 }): Promise<number | null> {
   const short = args.sessionId.slice(0, 8);
+  // Resolve a non-empty name so the daemon's state.json gets a stable label
+  // immediately. Without this the bg-worker registers with `name === ''` and
+  // the dashboard cards briefly render the 8-char hex short until claude's
+  // own status loop catches up (the "title flicker" bug). Falls back to a
+  // prompt-derived title when the caller didn't supply one explicitly.
+  const resolvedName = deriveSessionName(args.name, args.prompt);
   const launchArgs: string[] = ['--session-id', args.sessionId];
   if (args.agent) launchArgs.push('--agent', args.agent);
   if (args.model) launchArgs.push('--model', args.model);
-  if (args.name) launchArgs.push('--name', args.name);
+  if (resolvedName) launchArgs.push('--name', resolvedName);
   // Propagate the user's permission selection into the bg worker spawn.
   // Without this, the daemon's claude defaults to "default" which blocks
   // on every tool prompt — invisible to AgentView.
   const permMode = (args.permissionMode || 'bypassPermissions').trim();
   launchArgs.push('--permission-mode', permMode);
 
-  const payload = {
+  const payload: Record<string, unknown> = {
     proto: 1,
     short,
     nonce: randomBytes(4).toString('hex'),
@@ -97,6 +154,9 @@ async function dispatchToDaemon(args: {
     cols: 120,
     rows: 30
   };
+  // Top-level `name` so the daemon's state-writer picks up our derived label
+  // on the very first state.json flush, before any --name CLI parse happens.
+  if (resolvedName) payload.name = resolvedName;
   try {
     await fsp.mkdir(DISPATCH_DIR, { recursive: true });
     const target = join(DISPATCH_DIR, `${short}.json`);
@@ -123,6 +183,44 @@ async function dispatchToDaemon(args: {
   }
   console.warn('[runner] daemon did not register worker for', short);
   return null;
+}
+
+/**
+ * Patch jobs/<short>/state.json with our derived display name *only when the
+ * worker has no name yet*. Preserves any user-renamed label (nameSource ===
+ * 'user' or any non-empty `name` already present). Atomic write via tmp+
+ * rename, mirroring the renameJob IPC pattern in ipc.ts.
+ *
+ * Retries briefly because the daemon writes state.json *after* the roster
+ * entry appears, so the first read can lose the race. Best-effort —
+ * dashboard liveWatcher reads from this file and will re-emit on update.
+ */
+async function backfillJobStateName(sessionId: string, name: string): Promise<void> {
+  if (!name) return;
+  const short = sessionId.slice(0, 8);
+  const statePath = join(JOBS_DIR, short, 'state.json');
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await new Promise((r) => setTimeout(r, attempt === 0 ? 400 : 600));
+    try {
+      const raw = await fsp.readFile(statePath, 'utf8');
+      const data = JSON.parse(raw) as Record<string, unknown>;
+      const existingName = typeof data.name === 'string' ? data.name.trim() : '';
+      const nameSource = typeof data.nameSource === 'string' ? data.nameSource : '';
+      // Preserve any user-supplied label (renameJob writes nameSource:'user').
+      if (nameSource === 'user') return;
+      if (existingName) return;
+      data.name = name;
+      // Mark as 'auto' so renameJob can still override later, and so claude's
+      // own derivation loop knows we already filled in a default title.
+      data.nameSource = 'auto';
+      const tmp = statePath + '.tmp';
+      await fsp.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
+      await fsp.rename(tmp, statePath);
+      return;
+    } catch {
+      /* state.json not written yet — keep retrying */
+    }
+  }
 }
 
 function resolveClaudeExe(): string {

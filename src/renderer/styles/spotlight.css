@@ -1,0 +1,113 @@
+/* SpotlightTour — anchor-highlight first-run walkthrough. Loaded only when
+   the tour mounts, so we keep this in its own file to avoid bloating
+   global.css. */
+
+.tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  font-family: inherit;
+}
+
+.tour-dim {
+  position: fixed;
+  background: rgba(8, 10, 16, 0.62);
+  transition: top 200ms ease, left 200ms ease, width 200ms ease, height 200ms ease;
+  pointer-events: auto;
+}
+
+.tour-ring {
+  position: fixed;
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 2px var(--accent, #7aa2ff),
+    0 0 0 6px rgba(122, 162, 255, 0.25),
+    0 14px 40px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  transition: top 200ms ease, left 200ms ease, width 200ms ease, height 200ms ease;
+  animation: tour-ring-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tour-ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent, #7aa2ff), 0 0 0 6px rgba(122,162,255,0.25), 0 14px 40px rgba(0,0,0,0.35); }
+  50%      { box-shadow: 0 0 0 2px var(--accent, #7aa2ff), 0 0 0 10px rgba(122,162,255,0.12), 0 14px 40px rgba(0,0,0,0.35); }
+}
+
+.tour-tooltip {
+  position: fixed;
+  width: 320px;
+  background: var(--card, #171a22);
+  color: var(--fg, #e7e9ee);
+  border: 1px solid var(--border, #262a35);
+  border-radius: 12px;
+  padding: 14px 16px 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+  z-index: 10000;
+}
+
+.tour-step-counter {
+  font-size: 11px;
+  color: var(--muted, #9aa1ad);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.tour-title {
+  margin: 0 0 6px 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tour-body {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg, #e7e9ee);
+}
+
+.tour-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tour-nav {
+  display: flex;
+  gap: 6px;
+}
+
+.tour-tooltip .btn {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border, #262a35);
+  background: transparent;
+  color: var(--fg, #e7e9ee);
+  cursor: pointer;
+}
+
+.tour-tooltip .btn.ghost {
+  border-color: transparent;
+  color: var(--muted, #9aa1ad);
+}
+
+.tour-tooltip .btn.primary {
+  background: var(--accent, #7aa2ff);
+  color: #0b0d13;
+  border-color: var(--accent, #7aa2ff);
+}
+
+.tour-tooltip .btn:hover {
+  border-color: var(--accent, #7aa2ff);
+}
+
+@media (max-width: 600px) {
+  .tour-tooltip {
+    width: calc(100vw - 24px);
+    left: 12px !important;
+  }
+}

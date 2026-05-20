@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>AgentView · Claude Code CLI 설치 가이드</title>
+<style>
+  :root{
+    --bg:#0f1116; --fg:#e7e9ee; --muted:#9aa1ad; --card:#171a22;
+    --border:#262a35; --accent:#7aa2ff; --good:#4ade80; --warn:#f59e0b;
+  }
+  @media (prefers-color-scheme:light){
+    :root{--bg:#fbfbfc;--fg:#171a22;--muted:#5b6472;--card:#fff;--border:#e4e6ec;--accent:#2554c7;}
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;font-family:'Pretendard','Noto Sans KR','Inter','Segoe UI',sans-serif;background:var(--bg);color:var(--fg);font-size:15px;line-height:1.55}
+  main{max-width:760px;margin:0 auto;padding:36px 28px 64px}
+  h1{font-size:24px;margin:0 0 6px 0}
+  h2{font-size:17px;margin:28px 0 6px 0;color:var(--accent)}
+  p{margin:0 0 10px 0}
+  code,kbd{font-family:'JetBrains Mono','Consolas',monospace;background:rgba(122,162,255,.10);border:1px solid var(--border);border-radius:5px;padding:2px 6px;font-size:13px}
+  pre{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;overflow:auto;font-size:13px;font-family:'JetBrains Mono','Consolas',monospace}
+  ul{padding-left:20px;margin:0 0 12px 0}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin:18px 0}
+  .ok{color:var(--good)} .warn{color:var(--warn)}
+  a{color:var(--accent)}
+  hr{border:0;border-top:1px solid var(--border);margin:24px 0}
+  .small{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Claude Code CLI 설치 가이드</h1>
+  <p class="small">AgentView 가 백그라운드 에이전트를 띄우려면 시스템에 <code>claude</code> CLI 가 설치돼 있어야 합니다. 인스톨러가 자동 설치를 시도했지만 Node.js / npm 이 시스템에 없으면 건너뜁니다.</p>
+
+  <div class="card">
+    <h2>1단계 · Node.js 설치</h2>
+    <p>두 가지 방법 중 하나를 고르세요.</p>
+    <ul>
+      <li><b>공식 설치 프로그램</b> — <a href="https://nodejs.org/en/download" target="_blank" rel="noopener noreferrer">nodejs.org</a> 에서 LTS 버전 (18 이상). 설치 중 "Add to PATH" 옵션을 켜야 합니다.</li>
+      <li><b>nvm-windows</b> — <a href="https://github.com/coreybutler/nvm-windows/releases" target="_blank" rel="noopener noreferrer">github.com/coreybutler/nvm-windows</a>. 여러 Node 버전 전환이 편합니다.</li>
+    </ul>
+    <p>설치 후 새 PowerShell 창을 열고 확인:</p>
+    <pre>node -v
+npm -v</pre>
+  </div>
+
+  <div class="card">
+    <h2>2단계 · claude CLI 설치</h2>
+    <p>관리자 권한 없이 사용자 영역에 전역 설치합니다.</p>
+    <pre>npm install -g @anthropic-ai/claude-code</pre>
+    <p>설치 후 버전 확인:</p>
+    <pre>claude --version</pre>
+    <p>OAuth 로그인:</p>
+    <pre>claude login</pre>
+  </div>
+
+  <div class="card">
+    <h2>3단계 · AgentView 재시작</h2>
+    <p>AgentView 우상단의 상태 배지가 <span class="ok">초록색 "Claude OK"</span> 로 바뀌면 준비 완료입니다. 그렇지 않으면 AgentView 를 한 번 종료하고 다시 실행하세요.</p>
+  </div>
+
+  <hr />
+
+  <h2>문제 해결</h2>
+  <ul>
+    <li><b>npm 명령을 못 찾는다</b> — PowerShell 을 새 창으로 열어 보세요. 그래도 안 되면 Node 설치 시 "Add to PATH" 가 꺼졌을 가능성. 재설치하세요.</li>
+    <li><b>회사 프록시</b> — <code>npm config set proxy</code> / <code>https-proxy</code> 로 프록시를 등록해야 합니다.</li>
+    <li><b>인증서 오류</b> — 사내 SSL 인증서가 필요할 수 있습니다. IT 부서에 문의.</li>
+  </ul>
+
+  <p class="small">이 페이지는 AgentView 가 자동으로 띄웠습니다 — 닫아도 됩니다. 다시 보려면 옵션 패널의 "CLI 가이드 보기" 를 클릭하세요.</p>
+</main>
+</body>
+</html>

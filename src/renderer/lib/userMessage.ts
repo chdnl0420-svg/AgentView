@@ -67,7 +67,12 @@ const HARD_DROP_PATTERNS: RegExp[] = [
   /<local-command-stdout>/i,
   /Goal set:\s/i,
   /<task-notification>/i,
-  /Background command "/i
+  /Background command "/i,
+  // Claude Code auto-injects this exact line on `claude --continue` /
+  // resume flows. It's not something the user typed, so it should never
+  // appear as a "나" bubble. Allow trailing dot + whitespace variations.
+  /^Continue from where you left off\.?\s*$/im,
+  /\bContinue from where you left off\b/i
 ];
 
 // Loose noise lines that arrive outside any tag. Each pattern matches a
@@ -172,7 +177,23 @@ export type Segment =
   | { kind: 'code'; text: string }
   | { kind: 'bold'; text: string };
 
-const PATH_RE = /([a-zA-Z]:\\[\w\-.\\/ ]+|\/[\w\-./]{2,}|~\/[\w\-./]+|\.\.?\/[\w\-./]+)/g;
+// Path detection. Two tiers:
+//
+//   (a) Quoted variants — anything between matching " ' or ` quotes that
+//       looks like an absolute path is treated as a path. Quotes are the
+//       only context where spaces and non-ASCII (Korean) folder names are
+//       allowed, because outside quotes we can't tell where the path ends.
+//
+//   (b) Unquoted variants — ASCII-only, no spaces. Each ends with a `\w`
+//       so trailing punctuation (sentence-end period, comma, colon,
+//       closing paren/bracket/brace, quote char) is left in the
+//       surrounding text instead of being absorbed into the path. The
+//       trailing lookahead double-checks the boundary.
+//
+// `(?<!:)` on the bare POSIX absolute form prevents `https://example.com/x`
+// from matching `s://example.com/x` (URL scheme separator, not a path).
+const PATH_RE =
+  /(?:"[A-Za-z]:[\\/][^"\n]+"|'[A-Za-z]:[\\/][^'\n]+'|`[A-Za-z]:[\\/][^`\n]+`|"\/[^"\n]+"|'\/[^'\n]+'|`\/[^`\n]+`|[A-Za-z]:\\[\w\-./\\]*\w|[A-Za-z]:\/[\w\-./]*\w|(?<!:)\/[\w\-./]*\w|~\/[\w\-./]*\w|\.\.?\/[\w\-./]*\w)(?=$|[\s"'`)\]},.;:!?])/g;
 const CODE_RE = /`([^`\n]+)`/g;
 const BOLD_RE = /\*\*([^*\n]+)\*\*/g;
 

@@ -1,0 +1,242 @@
+/* Custom Windows-style title bar + options popover. Loaded with the
+   WindowChrome component so the styles only ship when the component
+   actually mounts. */
+
+.window-chrome {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  display: flex;
+  align-items: stretch;
+  z-index: 5000;
+  background: linear-gradient(180deg, rgba(15,17,22,.95), rgba(15,17,22,.88));
+  border-bottom: 1px solid var(--border, #262a35);
+  color: var(--fg, #e7e9ee);
+  -webkit-app-region: no-drag;
+  font-family: inherit;
+}
+
+.window-drag {
+  flex: 1;
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--muted, #9aa1ad);
+  user-select: none;
+}
+
+.window-title {
+  letter-spacing: 0.2px;
+  font-weight: 500;
+}
+
+.window-actions {
+  display: flex;
+  align-items: stretch;
+  -webkit-app-region: no-drag;
+}
+
+.window-options-btn,
+.window-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--fg, #e7e9ee);
+  width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.window-options-btn {
+  width: 38px;
+  color: var(--muted, #9aa1ad);
+}
+.window-options-btn:hover {
+  color: var(--fg, #e7e9ee);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.window-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.window-btn.close:hover {
+  background: #e63946;
+  color: #fff;
+}
+
+.window-btn svg {
+  display: block;
+}
+
+/* Push the page content below the title bar. We use padding instead of
+   margin so existing fixed-position children (like UpdateBanner) sit
+   under the chrome correctly. */
+body {
+  padding-top: 32px;
+}
+
+/* The app already has a few `.app` containers — make sure they take the
+   remaining height even with the new chrome on top. */
+.app.no-chrome,
+.app {
+  min-height: calc(100vh - 32px);
+}
+
+/* ------- Options popover ------- */
+
+.options-popover {
+  position: fixed;
+  top: 36px;
+  right: 96px;
+  width: 320px;
+  background: var(--card, #171a22);
+  color: var(--fg, #e7e9ee);
+  border: 1px solid var(--border, #262a35);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  z-index: 5100;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.options-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border, #262a35);
+}
+.options-head h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.options-head .x {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #9aa1ad);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.options-head .x:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--fg, #e7e9ee);
+}
+
+.options-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border, #262a35);
+}
+.options-row:last-of-type {
+  border-bottom: 0;
+}
+
+.row-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.row-sub {
+  font-size: 12px;
+  color: var(--muted, #9aa1ad);
+  margin-top: 2px;
+  max-width: 220px;
+}
+
+.latest-pill {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--good, #4ade80);
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.4);
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+.options-row .btn.primary.small {
+  padding: 5px 12px;
+  font-size: 12px;
+  background: var(--accent, #7aa2ff);
+  color: #0b0d13;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.options-foot {
+  padding: 10px 14px;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(255, 255, 255, 0.02);
+}
+.options-foot .btn.ghost {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #9aa1ad);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.options-foot .btn.ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg, #e7e9ee);
+}
+
+/* iOS-style toggle */
+.opt-toggle {
+  appearance: none;
+  border: 0;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  position: relative;
+  cursor: pointer;
+  transition: background 180ms ease;
+  flex-shrink: 0;
+}
+.opt-toggle .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 180ms ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.opt-toggle.on {
+  background: var(--accent, #7aa2ff);
+}
+.opt-toggle.on .knob {
+  left: 18px;
+}
+
+@media (prefers-color-scheme: light) {
+  .window-chrome {
+    background: linear-gradient(180deg, #fff, #f3f5f9);
+    color: #171a22;
+  }
+  .window-drag {
+    color: #5b6472;
+  }
+}

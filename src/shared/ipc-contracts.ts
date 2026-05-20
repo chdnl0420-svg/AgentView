@@ -6,6 +6,7 @@ import type {
   ConversationFile,
   GitBranchesResult,
   NewSessionInput,
+  PermissionMode,
   PermissionPromptEvent,
   ResumeMessageInput,
   RunningSessionInfo,
@@ -53,7 +54,25 @@ export const IPC = {
   WorkspaceRead: 'workspace:read',
   WorkspaceExportReport: 'workspace:exportReport',
   WorkspaceOpenRoot: 'workspace:openRoot',
-  ClaudeStatus: 'claude:status'
+  ClaudeStatus: 'claude:status',
+
+  // ----- 1.0.5 SessionDetail mega-pass -----
+  /** Typed preview of an arbitrary file path. Returns { kind, content?, … } */
+  FilePreview: 'file:preview',
+  /** Put a single file onto the system clipboard so it can be pasted in Explorer. */
+  ShellCopyFile: 'shell:copyFile',
+  /** Patch the live session's permission mode (best-effort, may need respawn). */
+  SessionsSetPermission: 'sessions:setPermission',
+  /** Patch the live session's preferred model (best-effort, may need respawn). */
+  SessionsSetModel: 'sessions:setModel',
+
+  // ----- 1.0.5 window chrome + options popover -----
+  WindowMinimize: 'window:minimize',
+  WindowToggleMaximize: 'window:toggleMaximize',
+  WindowClose: 'window:close',
+  WindowIsMaximized: 'window:isMaximized',
+  OptionsGetAutostart: 'options:getAutostart',
+  OptionsSetAutostart: 'options:setAutostart'
 } as const;
 
 export const EVT = {
@@ -63,7 +82,8 @@ export const EVT = {
   ClaudeRunEvent: 'sessions:runEvent',
   RunningChanged: 'sessions:runningChanged',
   PermissionPrompt: 'sessions:permissionPrompt',
-  UpdaterProgress: 'updater:progress'
+  UpdaterProgress: 'updater:progress',
+  WindowMaximizedChanged: 'window:maximizedChanged'
 } as const;
 
 export interface AgentViewApi {
@@ -89,6 +109,8 @@ export interface AgentViewApi {
     unwatchOutput(sessionId: string): Promise<void>;
     answerPrompt(sessionId: string, key: string): Promise<{ ok: boolean; reason?: string }>;
     renameJob(sessionId: string, name: string | null): Promise<{ ok: boolean; reason?: string }>;
+    setPermission(sessionId: string, mode: PermissionMode): Promise<{ ok: boolean; reason?: string }>;
+    setModel(sessionId: string, model: string | null): Promise<{ ok: boolean; reason?: string }>;
     deleteMany(sessionIds: string[]): Promise<{ ok: boolean; deleted: string[]; failed: Array<{ sessionId: string; reason: string }> }>;
     fetchUsage(): Promise<{
       fiveHour?: { used: number; limit: number; pct: number; resetIso?: string; resetIn?: string };
@@ -122,6 +144,17 @@ export interface AgentViewApi {
   };
   shell: {
     openPath(path: string): Promise<{ ok: boolean; reason?: string }>;
+    copyFile(path: string): Promise<{ ok: boolean; reason?: string }>;
+  };
+  file: {
+    preview(path: string): Promise<{
+      kind: 'html' | 'markdown' | 'text' | 'image' | 'json' | 'binary' | 'too-large' | 'missing';
+      content?: string;
+      dataUrl?: string;
+      mime?: string;
+      size?: number;
+      reason?: string;
+    } | null>;
   };
   commands: {
     list(): Promise<SlashCommandEntry[]>;
@@ -157,6 +190,17 @@ export interface AgentViewApi {
       supervisorPid: number | null;
       checkedAt: number;
     }>;
+  };
+  window: {
+    minimize(): Promise<void>;
+    toggleMaximize(): Promise<void>;
+    close(): Promise<void>;
+    isMaximized(): Promise<boolean>;
+    onMaximizedChanged(handler: (m: boolean) => void): () => void;
+  };
+  options: {
+    getAutostart(): Promise<boolean>;
+    setAutostart(on: boolean): Promise<{ ok: boolean }>;
   };
 }
 

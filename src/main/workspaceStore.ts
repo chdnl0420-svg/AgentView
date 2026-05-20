@@ -107,7 +107,7 @@ export async function writeSessionDoc(doc: SessionDoc): Promise<void> {
 
 export async function appendSessionEvent(
   sessionId: string,
-  kind: 'spawn' | 'resume' | 'error' | 'cancel' | 'status' | 'note',
+  kind: 'spawn' | 'resume' | 'error' | 'cancel' | 'status' | 'note' | 'permission-change' | 'model-change',
   text: string
 ): Promise<void> {
   const p = docPath(sessionId);

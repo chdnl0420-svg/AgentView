@@ -12,7 +12,8 @@ import { SessionList } from './components/SessionList';
 import { SessionDetail, type QueuedPrompt } from './components/SessionDetail';
 import { InputBar, type InputDraft } from './components/InputBar';
 import { UpdateBanner } from './components/UpdateBanner';
-import { FirstRunTutorial } from './components/FirstRunTutorial';
+import { SpotlightTour } from './components/SpotlightTour';
+import { WindowChrome } from './components/WindowChrome';
 import { loadJSON, saveJSON } from './lib/persistence';
 import { getViewMode, setViewMode, type ViewMode } from './lib/viewMode';
 
@@ -602,9 +603,10 @@ export default function App() {
   if (selected && viewMode === 'cards') {
     return (
       <>
+        <WindowChrome />
         <UpdateBanner />
         {claudeStatusBanner}
-        <FirstRunTutorial />
+        <SpotlightTour />
         <SessionDetail
           session={selected}
           agents={agents}
@@ -706,9 +708,10 @@ export default function App() {
   // Card mode: session grid + input bar
   return (
     <div className="app no-chrome">
+      <WindowChrome />
       <UpdateBanner />
       {claudeStatusBanner}
-      <FirstRunTutorial />
+      <SpotlightTour />
       <div className="dashboard">
         <div
           className="grid-wrap"
