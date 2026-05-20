@@ -8,11 +8,13 @@ import type {
   ScanSessionsResult
 } from '@shared/types';
 import { SessionCard } from './components/SessionCard';
+import { SessionList } from './components/SessionList';
 import { SessionDetail, type QueuedPrompt } from './components/SessionDetail';
 import { InputBar, type InputDraft } from './components/InputBar';
 import { UpdateBanner } from './components/UpdateBanner';
 import { FirstRunTutorial } from './components/FirstRunTutorial';
 import { loadJSON, saveJSON } from './lib/persistence';
+import { getViewMode, setViewMode, type ViewMode } from './lib/viewMode';
 
 const NEW_DRAFT_KEY = 'draft.new';
 const RESUME_DRAFTS_KEY = 'draft.resume';
@@ -124,6 +126,8 @@ export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [running, setRunning] = useState<RunningSessionInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewMode, setViewModeState] = useState<ViewMode>(() => getViewMode());
+  const viewModeRef = useRef<ViewMode>(viewMode);
   const [loading, setLoading] = useState(true);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -135,6 +139,14 @@ export default function App() {
   const [renames, setRenames] = useState<Record<string, string>>(() => loadRenames());
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(() => new Set());
+  const toggleViewMode = useCallback(() => {
+    setViewModeState((prev) => {
+      const next: ViewMode = prev === 'cards' ? 'single' : 'cards';
+      viewModeRef.current = next;
+      setViewMode(next);
+      return next;
+    });
+  }, []);
   const toggleDeleteMode = useCallback(() => {
     setDeleteMode((v) => {
       if (v) setSelectedForDelete(new Set());
@@ -550,6 +562,10 @@ export default function App() {
         setPending((prev) =>
           prev.map((p) => (p.tempId === tempId ? { ...p, realSessionId } : p))
         );
+        // In single mode, auto-select the newly started session
+        if (viewModeRef.current === 'single') {
+          setSelectedId(realSessionId);
+        }
         for (const delay of [400, 900, 2000, 4000, 6500]) {
           window.setTimeout(() => reloadSessions(), delay);
         }
@@ -582,7 +598,8 @@ export default function App() {
       <span>Claude Code 백그라운드 데몬이 꺼져있습니다 — 새 작업 시작 시 자동으로 깨웁니다.</span>
     </div>
   ) : null;
-  if (selected) {
+  // Card mode: open session → fullscreen detail
+  if (selected && viewMode === 'cards') {
     return (
       <>
         <UpdateBanner />
@@ -615,6 +632,78 @@ export default function App() {
     );
   }
 
+  // Single mode: SessionList (left) + work area (right)
+  if (viewMode === 'single') {
+    return (
+      <div className="app no-chrome">
+        <UpdateBanner />
+        {claudeStatusBanner}
+        <FirstRunTutorial />
+        <div className="dashboard single">
+          <SessionList
+            sessions={sessionsList}
+            selectedId={selectedId}
+            onSelect={(s) => {
+              if (s.sessionId.startsWith(PENDING_PREFIX)) {
+                setToast({ kind: 'info', text: '에이전트가 시작 중입니다. 잠시만 기다려주세요.' });
+                return;
+              }
+              setSelectedId(s.sessionId);
+            }}
+            onNewClick={() => setSelectedId(null)}
+            renames={renames}
+            now={now}
+            viewMode={viewMode}
+            onViewModeToggle={toggleViewMode}
+          />
+          <div className="single-workspace">
+            {selected ? (
+              <SessionDetail
+                session={selected}
+                agents={agents}
+                running={running}
+                onBack={() => {
+                  setRenames(loadRenames());
+                  setSelectedId(null);
+                }}
+                draft={draftsRef.current.get(selected.sessionId)}
+                onDraftChange={(d) => setDraft(selected.sessionId, d)}
+                queue={queues[selected.sessionId] ?? []}
+                onQueueChange={(updater) => setQueue(selected.sessionId, updater)}
+                onForked={(_old, next) => {
+                  setSelectedId(next);
+                  setToast({
+                    kind: 'info',
+                    text:
+                      '이 에이전트가 CLI에서 이미 실행 중이라 새 분기 세션으로 이어갑니다. 원본은 그대로 두고 새 sid로 진행됩니다.'
+                  });
+                  window.setTimeout(reloadSessions, 600);
+                }}
+              />
+            ) : (
+              <div className="single-new-task">
+                <InputBar
+                  mode="new"
+                  agents={agents}
+                  defaultCwd={DEFAULT_CWD}
+                  draft={newDraft}
+                  onDraftChange={setNewDraft}
+                  onSend={onStartNewSession}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+        {toast && (
+          <div className={`toast ${toast.kind}`} onClick={() => setToast(null)}>
+            {toast.text}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Card mode: session grid + input bar
   return (
     <div className="app no-chrome">
       <UpdateBanner />
@@ -661,6 +750,8 @@ export default function App() {
             onToggleDelete={toggleDeleteSelection}
             onToggleDeleteMode={toggleDeleteMode}
             onPerformBulkDelete={performBulkDelete}
+            viewMode={viewMode}
+            onViewModeToggle={toggleViewMode}
           />
         </div>
 
@@ -697,7 +788,9 @@ function SessionsGrid({
   selectedForDelete,
   onToggleDelete,
   onToggleDeleteMode,
-  onPerformBulkDelete
+  onPerformBulkDelete,
+  viewMode,
+  onViewModeToggle
 }: {
   sessions: BgSession[];
   loading: boolean;
@@ -713,6 +806,8 @@ function SessionsGrid({
   onToggleDelete: (sid: string) => void;
   onToggleDeleteMode: () => void;
   onPerformBulkDelete: () => void;
+  viewMode: ViewMode;
+  onViewModeToggle: () => void;
 }) {
   const toggle = (key: SessionFilter) => {
     const next = new Set(filter);
@@ -772,17 +867,43 @@ function SessionsGrid({
             </button>
           )}
         </div>
-        <div className="filters" title="여러 탭을 동시에 선택할 수 있습니다">
-          {tabs.map((t) => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="view-mode-toggle" title="보기 모드 전환">
             <button
-              key={t.key}
-              className={`btn sm ${filter.has(t.key) ? 'primary' : 'ghost'}`}
-              onClick={() => toggle(t.key)}
-              aria-pressed={filter.has(t.key)}
+              type="button"
+              className={`view-mode-btn ${viewMode === 'cards' ? 'active' : ''}`}
+              onClick={() => viewMode !== 'cards' && onViewModeToggle()}
+              disabled={viewMode === 'cards'}
+              title="카드 모드"
+              aria-label="카드 모드"
+              aria-pressed={viewMode === 'cards' ? 'true' : 'false'}
             >
-              {t.label} {counts[t.key]}
+              ▣
             </button>
-          ))}
+            <button
+              type="button"
+              className={`view-mode-btn ${viewMode === 'single' ? 'active' : ''}`}
+              onClick={() => viewMode !== 'single' && onViewModeToggle()}
+              disabled={viewMode === 'single'}
+              title="단일화면 모드"
+              aria-label="단일화면 모드"
+              aria-pressed={viewMode === 'single' ? 'true' : 'false'}
+            >
+              ▤
+            </button>
+          </div>
+          <div className="filters" title="여러 탭을 동시에 선택할 수 있습니다">
+            {tabs.map((t) => (
+              <button
+                key={t.key}
+                className={`btn sm ${filter.has(t.key) ? 'primary' : 'ghost'}`}
+                onClick={() => toggle(t.key)}
+                aria-pressed={filter.has(t.key)}
+              >
+                {t.label} {counts[t.key]}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       {loading && <div className="empty-grid">로딩 중…</div>}
