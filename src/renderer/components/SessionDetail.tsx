@@ -172,11 +172,32 @@ export function SessionDetail({
   const [permDropdownOpen, setPermDropdownOpen] = useState(false);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [badgeToast, setBadgeToast] = useState<string | null>(null);
+  const permDropdownRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!badgeToast) return;
     const t = window.setTimeout(() => setBadgeToast(null), 3000);
     return () => window.clearTimeout(t);
   }, [badgeToast]);
+  useEffect(() => {
+    if (!permDropdownOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && permDropdownRef.current?.contains(target)) return;
+      setPermDropdownOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setPermDropdownOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [permDropdownOpen]);
   // Goal text shown in the goal-row: workspace doc prompt first, then last
   // user message, then nothing (the row hides itself).
   const goalText = workspacePrompt || null;
@@ -794,33 +815,37 @@ export function SessionDetail({
           <div className="meta-row">
             <span className={`status-tag ${session.status}`}>{statusLabel(session)}</span>
             {data?.meta?.permissionMode && (
-              <button
-                type="button"
-                className="perm-tag clickable"
-                title="권한 모드 (다음 메시지부터 적용)"
-                onClick={() => setPermDropdownOpen((v) => !v)}
-              >
-                🛡 {permLabel(data.meta.permissionMode as string)}
-                <span className="caret">▾</span>
-              </button>
-            )}
-            {permDropdownOpen && (
-              <div className="badge-dropdown" role="menu">
-                {(['bypassPermissions','acceptEdits','default','plan'] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    role="menuitem"
-                    onClick={async () => {
-                      setPermDropdownOpen(false);
-                      try {
-                        await window.av.sessions.setPermission(session.sessionId, m);
-                        setBadgeToast('권한이 다음 메시지부터 적용됩니다.');
-                      } catch {/* ignore */}
-                    }}
-                  >{permLabel(m)}</button>
-                ))}
-              </div>
+              <span className="perm-badge-wrap" ref={permDropdownRef}>
+                <button
+                  type="button"
+                  className="perm-tag clickable"
+                  title="권한 모드 (다음 메시지부터 적용)"
+                  aria-haspopup="menu"
+                  aria-expanded={permDropdownOpen}
+                  onClick={() => setPermDropdownOpen((v) => !v)}
+                >
+                  🛡 {permLabel(data.meta.permissionMode as string)}
+                  <span className="caret">▾</span>
+                </button>
+                {permDropdownOpen && (
+                  <div className="badge-dropdown perm-dropdown" role="menu">
+                    {(['bypassPermissions','acceptEdits','default','plan'] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        role="menuitem"
+                        onClick={async () => {
+                          setPermDropdownOpen(false);
+                          try {
+                            await window.av.sessions.setPermission(session.sessionId, m);
+                            setBadgeToast('권한이 다음 메시지부터 적용됩니다.');
+                          } catch {/* ignore */}
+                        }}
+                      >{permLabel(m)}</button>
+                    ))}
+                  </div>
+                )}
+              </span>
             )}
             {modelLabel && (
               <button

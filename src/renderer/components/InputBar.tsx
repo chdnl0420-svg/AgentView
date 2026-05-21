@@ -28,6 +28,9 @@ const LAST_MODEL_KEY = 'lastModel';
 const LAST_CWD_KEY = 'lastCwd';
 const WT_ENABLED_KEY = 'wt.enabled';
 const WT_BASE_BRANCH_KEY = 'wt.baseBranch';
+const WT_BRANCH_VALUE_PREFIX = 'branch:';
+const WT_NEW_BRANCH_SELECTED = 'action:selected-new-branch';
+const WT_NEW_BRANCH_CREATE = 'action:create-new-branch';
 
 // Claude permission modes — what claude CLI accepts via --permission-mode.
 // 'bypassPermissions' is the user's preferred default (everything auto-runs),
@@ -55,6 +58,35 @@ function loadLastModel(): string {
 function loadLastCwd(fallback: string): string {
   const v = loadJSON<string>(LAST_CWD_KEY, '');
   return typeof v === 'string' && v.trim() ? v : fallback;
+}
+
+function encodeBranchOptionValue(branch: string): string {
+  return `${WT_BRANCH_VALUE_PREFIX}${encodeURIComponent(branch)}`;
+}
+
+function decodeBranchOptionValue(value: string): string | null {
+  if (!value.startsWith(WT_BRANCH_VALUE_PREFIX)) return null;
+  return decodeURIComponent(value.slice(WT_BRANCH_VALUE_PREFIX.length));
+}
+
+function getBranchNameError(value: string, existingBranches: string[] = []): string | null {
+  const v = value.trim();
+  if (!v) return 'Branch name is required.';
+  if (existingBranches.includes(v)) return 'Branch already exists.';
+  if (v === '@' || v === 'HEAD') return 'Branch name is reserved.';
+  if (v.startsWith('-')) return 'Invalid branch name.';
+  if (v.startsWith('/') || v.endsWith('/') || v.endsWith('.')) return 'Invalid branch name.';
+  if (v.includes('..') || v.includes('@{')) return 'Invalid branch name.';
+  if (/[\x00-\x20\x7f~^:?*\\[\]]/.test(v)) return 'Invalid branch name.';
+
+  const parts = v.split('/');
+  for (const part of parts) {
+    if (!part) return 'Invalid branch name.';
+    if (part.startsWith('.')) return 'Invalid branch name.';
+    if (/\.lock$/i.test(part)) return 'Invalid branch name.';
+  }
+
+  return null;
 }
 
 export interface InputDraft {
@@ -170,6 +202,10 @@ export function InputBar(props: InputBarProps) {
   const [wtBaseBranch, setWtBaseBranchState] = useState<string>(() =>
     isNew ? loadJSON<string>(WT_BASE_BRANCH_KEY, '') : ''
   );
+  const [wtNewBranch, setWtNewBranch] = useState('');
+  const [newBranchEditing, setNewBranchEditing] = useState(false);
+  const [newBranchDraft, setNewBranchDraft] = useState('');
+  const newBranchInputRef = useRef<HTMLInputElement>(null);
   const [branchInfo, setBranchInfo] = useState<GitBranchesResult | null>(null);
 
   const setWtEnabled = useCallback((v: boolean) => {
@@ -180,6 +216,32 @@ export function InputBar(props: InputBarProps) {
     setWtBaseBranchState(v);
     saveJSON(WT_BASE_BRANCH_KEY, v);
   }, []);
+
+  const startNewBranchEdit = useCallback(() => {
+    setNewBranchDraft(wtNewBranch);
+    setNewBranchEditing(true);
+  }, [wtNewBranch]);
+
+  const confirmNewBranch = useCallback(() => {
+    const next = newBranchDraft.trim();
+    const error = getBranchNameError(next, branchInfo?.branches);
+    if (error) {
+      alert('브랜치 이름에 공백이나 git 금지 문자를 쓸 수 없습니다.');
+      return;
+    }
+    setWtNewBranch(next);
+    setNewBranchEditing(false);
+  }, [branchInfo?.branches, newBranchDraft]);
+
+  const cancelNewBranchEdit = useCallback(() => {
+    setNewBranchDraft(wtNewBranch);
+    setNewBranchEditing(false);
+  }, [wtNewBranch]);
+
+  useEffect(() => {
+    if (!newBranchEditing) return;
+    requestAnimationFrame(() => newBranchInputRef.current?.focus());
+  }, [newBranchEditing]);
 
   // Whenever branch info refreshes, snap the selected base branch to the
   // current branch if the user hasn't picked one yet (or their saved choice
@@ -438,6 +500,7 @@ export function InputBar(props: InputBarProps) {
         const wtOn = wtEnabled && !!effectiveBranchInfo?.isRepo;
         let worktreePath: string | null = null;
         let baseBranch: string | null = null;
+        let newBranch: string | null = null;
         if (wtOn) {
           baseBranch =
             (wtBaseBranch && effectiveBranchInfo!.branches.includes(wtBaseBranch)
@@ -457,6 +520,16 @@ export function InputBar(props: InputBarProps) {
             alert('워크트리 경로를 자동으로 결정하지 못했습니다.');
             return;
           }
+          const pendingNewBranch = newBranchEditing ? newBranchDraft.trim() : wtNewBranch.trim();
+          newBranch = pendingNewBranch || null;
+          if (newBranch) {
+            const error = getBranchNameError(newBranch, effectiveBranchInfo!.branches);
+            if (error) {
+              if (newBranchEditing) requestAnimationFrame(() => newBranchInputRef.current?.focus());
+              alert('브랜치 이름에 공백이나 git 금지 문자를 쓸 수 없습니다.');
+              return;
+            }
+          }
         }
         await props.onSend({
           prompt: finalPrompt,
@@ -467,7 +540,7 @@ export function InputBar(props: InputBarProps) {
           permissionMode,
           worktreePath,
           baseBranch,
-          newBranch: null
+          newBranch
         });
       } else {
         await props.onSend({
@@ -489,6 +562,11 @@ export function InputBar(props: InputBarProps) {
       setPromptState('');
       setAttachmentsState([]);
       setHistoryIdx(-1);
+      if (isNew) {
+        setWtNewBranch('');
+        setNewBranchDraft('');
+        setNewBranchEditing(false);
+      }
       if (onDraftChange) onDraftChange({ prompt: '', attachments: [] });
       // Clear the autosaved draft so a restarted app doesn't restore
       // text the user has already sent.
@@ -694,21 +772,59 @@ export function InputBar(props: InputBarProps) {
             {wtEnabled && branchInfo?.isRepo && (
               <div className="control wt-base">
                 <label htmlFor="wt-base-select">시작 브런치</label>
-                <select
-                  id="wt-base-select"
-                  value={wtBaseBranch}
-                  onChange={(e) => setWtBaseBranch(e.target.value)}
-                  title="새 워크트리를 이 브런치 기반으로 생성합니다"
-                >
-                  {!branchInfo.branches.includes(wtBaseBranch) && wtBaseBranch && (
-                    <option value={wtBaseBranch}>{wtBaseBranch}</option>
-                  )}
-                  {branchInfo.branches.map((b) => (
-                    <option key={b} value={b}>
-                      {b === branchInfo.current ? `${b}  (현재)` : b}
-                    </option>
-                  ))}
-                </select>
+                {newBranchEditing ? (
+                  <input
+                    ref={newBranchInputRef}
+                    id="wt-base-select"
+                    className="wt-new-branch-input"
+                    value={newBranchDraft}
+                    placeholder="새 브랜치 이름"
+                    onChange={(e) => setNewBranchDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        confirmNewBranch();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelNewBranchEdit();
+                      }
+                    }}
+                    onBlur={() => {
+                      if (newBranchDraft.trim()) confirmNewBranch();
+                      else cancelNewBranchEdit();
+                    }}
+                    title="Enter로 확정, Escape로 취소"
+                  />
+                ) : (
+                  <select
+                    id="wt-base-select"
+                    value={wtNewBranch ? WT_NEW_BRANCH_SELECTED : encodeBranchOptionValue(wtBaseBranch)}
+                    onChange={(e) => {
+                      if (e.target.value === WT_NEW_BRANCH_CREATE) {
+                        startNewBranchEdit();
+                      } else {
+                        const branchValue = decodeBranchOptionValue(e.target.value);
+                        if (!branchValue) return;
+                        setWtNewBranch('');
+                        setWtBaseBranch(branchValue);
+                      }
+                    }}
+                    title="새 워크트리를 이 브런치 기반으로 생성합니다"
+                  >
+                    {!branchInfo.branches.includes(wtBaseBranch) && wtBaseBranch && (
+                      <option value={encodeBranchOptionValue(wtBaseBranch)}>{wtBaseBranch}</option>
+                    )}
+                    {branchInfo.branches.map((b) => (
+                      <option key={b} value={encodeBranchOptionValue(b)}>
+                        {b === branchInfo.current ? `${b}  (현재)` : b}
+                      </option>
+                    ))}
+                    {wtNewBranch && (
+                      <option value={WT_NEW_BRANCH_SELECTED}>+ {wtNewBranch}</option>
+                    )}
+                    <option value={WT_NEW_BRANCH_CREATE}>+ 새 브랜치</option>
+                  </select>
+                )}
               </div>
             )}
           </div>
