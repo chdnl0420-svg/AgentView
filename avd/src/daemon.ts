@@ -12,6 +12,7 @@ import { Catalog } from './catalog.js';
 import { Roster } from './roster.js';
 import { adoptLive, type AdoptLiveResult } from './adoption.js';
 import { acquirePid, releasePid } from './pid.js';
+import { getProcessInfo } from './process-info.js';
 import { startServer, type ServerHandle } from './server.js';
 
 const HOME = homedir();
@@ -41,10 +42,25 @@ export async function bootAdoption(paths: {
   catalogPath: string;
   rosterPath: string;
   isAlive?: (pid: number) => boolean;
+  /**
+   * Override for tests. `null` disables OS-level zombie detection so
+   * test pids (e.g. 111) don't accidentally match a real OS process's
+   * startTime. Production callers leave this undefined → `getProcessInfo`.
+   */
+  processInfo?: ((pid: number) => Promise<import('./process-info.js').ProcessInfo | null>) | null;
 }): Promise<BootAdoptionResult> {
   const catalog = await Catalog.open(paths.catalogPath);
   const roster = await Roster.open(paths.rosterPath);
-  const result = await adoptLive({ catalog, roster, isAlive: paths.isAlive });
+  // Pass processInfo explicitly so the wiring is grep-able — production
+  // daemons MUST run zombie detection on Linux/macOS; Windows falls back
+  // to null inside getProcessInfo so the runtime cost there is zero.
+  const processInfo = paths.processInfo === undefined ? getProcessInfo : paths.processInfo;
+  const result = await adoptLive({
+    catalog,
+    roster,
+    isAlive: paths.isAlive,
+    processInfo,
+  });
   return { ...result, catalog, roster };
 }
 

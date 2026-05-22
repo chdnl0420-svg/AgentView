@@ -44,7 +44,7 @@ test('live pid → keep (catalog unchanged)', async () => {
     const roster = await Roster.open(rosterPath);
     await catalog.add({ sessionId: 's2', backend: 'claude', cwd: '/x', startedAt: 0, status: 'running', pid: 2 });
     await roster.register({ sessionId: 's2', pid: 2, backend: 'claude' });
-    const result = await adoptLive({ roster, catalog, isAlive: () => true });
+    const result = await adoptLive({ roster, catalog, isAlive: () => true, processInfo: null });
     assert.equal(result.kept.length, 1);
     assert.equal(result.kept[0].sessionId, 's2');
     assert.equal(result.cleaned.length, 0);
@@ -62,7 +62,7 @@ test('live pid + 오래된 startedAt → keep (zombie 오탐 차단)', async () 
     const longAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
     await catalog.add({ sessionId: 's3', backend: 'claude', cwd: '/x', startedAt: longAgo, status: 'running', pid: 3 });
     await roster.register({ sessionId: 's3', pid: 3, backend: 'claude', startedAt: longAgo });
-    const result = await adoptLive({ roster, catalog, isAlive: () => true });
+    const result = await adoptLive({ roster, catalog, isAlive: () => true, processInfo: null });
     assert.equal(result.kept.length, 1);
     assert.equal(result.cleaned.length, 0);
     assert.equal(catalog.get('s3').status, 'running'); // zombie 오탐 차단
@@ -74,7 +74,7 @@ test('roster 비어있음 → no-op', async () => {
   try {
     const catalog = await Catalog.open(catalogPath);
     const roster = await Roster.open(rosterPath);
-    const result = await adoptLive({ roster, catalog, isAlive: () => true });
+    const result = await adoptLive({ roster, catalog, isAlive: () => true, processInfo: null });
     assert.equal(result.kept.length, 0);
     assert.equal(result.cleaned.length, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -127,7 +127,7 @@ test('bootAdoption — Catalog.open + Roster.open + adoptLive complete before re
     await seedRos.register({ sessionId: 'live', pid: 111, backend: 'claude' });
     await seedRos.register({ sessionId: 'dead', pid: 222, backend: 'claude' });
     // Deterministic: only pid 111 is "alive".
-    const result = await bootAdoption({ catalogPath, rosterPath, isAlive: (pid) => pid === 111 });
+    const result = await bootAdoption({ catalogPath, rosterPath, isAlive: (pid) => pid === 111, processInfo: null });
     assert.equal(result.kept.length, 1, 'exactly 1 worker kept');
     assert.equal(result.kept[0].sessionId, 'live');
     assert.equal(result.cleaned.length, 1, 'exactly 1 worker cleaned');
@@ -176,6 +176,68 @@ test('catalog update happens before roster unregister (retry-safety on update fa
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('zombie pid (startTime mismatch beyond 60s) → cleanup as if dead', async () => {
+  // chunk-5b: isAlive=true but processInfo.startTime is way older than
+  // roster.startedAt → the pid was reused by some other process. Treat
+  // the same as a dead worker: roster.unregister + catalog crashed.
+  const { dir, rosterPath, catalogPath } = freshPaths();
+  try {
+    const catalog = await Catalog.open(catalogPath);
+    const roster = await Roster.open(rosterPath);
+    const now = Date.now();
+    await catalog.add({ sessionId: 'zomb', backend: 'claude', cwd: '/x', startedAt: now, status: 'running', pid: 7777 });
+    await roster.register({ sessionId: 'zomb', pid: 7777, backend: 'claude', startedAt: now });
+    // OS reports the pid is alive but the process started 10 minutes before
+    // our roster entry — clearly not the same process.
+    const processInfo = async (pid) => ({ startTime: now - 10 * 60 * 1000, command: 'unrelated' });
+    const result = await adoptLive({ roster, catalog, isAlive: () => true, processInfo });
+    assert.equal(result.cleaned.length, 1);
+    assert.equal(result.kept.length, 0);
+    assert.equal(catalog.get('zomb').status, 'crashed');
+    assert.equal(roster.forSession('zomb'), null);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('processInfo null (unsupported platform / OS error) → keep (fallback to chunk-5)', async () => {
+  const { dir, rosterPath, catalogPath } = freshPaths();
+  try {
+    const catalog = await Catalog.open(catalogPath);
+    const roster = await Roster.open(rosterPath);
+    await catalog.add({ sessionId: 's', backend: 'claude', cwd: '/x', startedAt: 0, status: 'running', pid: 8888 });
+    await roster.register({ sessionId: 's', pid: 8888, backend: 'claude' });
+    // processInfo unavailable on this platform (or throws).
+    const processInfo = async () => null;
+    const result = await adoptLive({ roster, catalog, isAlive: () => true, processInfo });
+    assert.equal(result.kept.length, 1);
+    assert.equal(result.cleaned.length, 0);
+    // Throws from processInfo are also treated as null (keep).
+    const processInfoThrows = async () => { throw new Error('OS API unavailable'); };
+    const result2 = await adoptLive({ roster, catalog, isAlive: () => true, processInfo: processInfoThrows });
+    assert.equal(result2.kept.length, 1);
+    assert.equal(result2.cleaned.length, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('zombie pid + 60s threshold boundary — within keeps, beyond cleans', async () => {
+  const { dir, rosterPath, catalogPath } = freshPaths();
+  try {
+    const catalog = await Catalog.open(catalogPath);
+    const roster = await Roster.open(rosterPath);
+    const baseline = 1_700_000_000_000; // arbitrary fixed epoch ms
+    await catalog.add({ sessionId: 'near', backend: 'claude', cwd: '/x', startedAt: baseline, status: 'running', pid: 9001 });
+    await roster.register({ sessionId: 'near', pid: 9001, backend: 'claude', startedAt: baseline });
+    // 59s diff — within 60s threshold, keep.
+    const processInfoNear = async () => ({ startTime: baseline - 59_000, command: 'whatever' });
+    const r1 = await adoptLive({ roster, catalog, isAlive: () => true, processInfo: processInfoNear });
+    assert.equal(r1.kept.length, 1, 'within threshold must keep');
+    assert.equal(r1.cleaned.length, 0);
+    // 61s diff — beyond, clean.
+    const processInfoFar = async () => ({ startTime: baseline - 61_000, command: 'whatever' });
+    const r2 = await adoptLive({ roster, catalog, isAlive: () => true, processInfo: processInfoFar });
+    assert.equal(r2.cleaned.length, 1, 'beyond threshold must clean');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('adoptLive reads live disk for catalog (stale in-memory does not skip update)', async () => {
   // Codex pass2 MEDIUM-A: another Catalog instance may have added a row
   // that our `catalog.list()` snapshot does not see. updateIfExists
@@ -211,7 +273,7 @@ test('mixed live + dead — only dead get cleaned', async () => {
       await roster.register({ sessionId: sid, pid, backend: 'claude' });
     }
     const isAlive = (pid) => pid === 100; // only 'live' survives
-    const result = await adoptLive({ roster, catalog, isAlive });
+    const result = await adoptLive({ roster, catalog, isAlive, processInfo: null });
     assert.equal(result.kept.length, 1);
     assert.equal(result.cleaned.length, 1);
     assert.equal(result.kept[0].sessionId, 'live');

@@ -6,7 +6,7 @@ depends_on: [chunk-4]
 owner: claude
 started_at: 2026-05-22
 completed_at: 2026-05-22
-summary: daemon boot 시 dead pid cleanup. zombie 검출은 chunk-5b 로 위임
+summary: daemon boot 시 dead pid cleanup. zombie 검출은 chunk-5b
 ---
 
 ## 산출
@@ -20,8 +20,5 @@ summary: daemon boot 시 dead pid cleanup. zombie 검출은 chunk-5b 로 위임
 - multi-instance stale-bypass / catalog-first ordering / wiring 검증 모두 포함
 
 ## 외부 검증
-- Codex 6 pass (LGTM:NO 5회 → YES). 회송 enum 모두 5회 임계 안.
+- Codex 6 pass (LGTM:NO 5회 → YES).
 - QA harness-qa-engineer: PASS (3 시나리오).
-
-## scope
-- chunk-5 = adoption *dead-only cleanup* 만. zombie (PID 재사용) 검출 + multiclient + Codex 스텁 + main 통합은 chunk-5b 로 위임 (chunks-overview 갱신 반영).
