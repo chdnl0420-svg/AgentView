@@ -5,6 +5,7 @@
   "main": "out/main/index.js",
   "author": "VisualAgents",
   "license": "MIT",
+  "workspaces": ["avd"],
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
