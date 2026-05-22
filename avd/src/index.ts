@@ -5,3 +5,10 @@
 
 export { AvdClient } from './client.js';
 export type { StartSessionAck, StartSessionInput, SubscribeAck, SubscribeOptions } from './client.js';
+export { scanCodexState } from './codex-scan.js';
+export type {
+  CodexConversationRecord,
+  CodexScanDiagnostic,
+  CodexScanOptions,
+  CodexScanResult,
+} from './codex-scan.js';

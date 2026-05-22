@@ -10,4 +10,4 @@
 | chunk-5 | Worker adoption (dead cleanup) | done | chunk-4 |
 | chunk-6 | WorkerAdapter 인터페이스 + ExternalClaudeAdapter | pending | chunk-5 |
 | chunk-7 | CodexAdapter 본 구현 + resume | pending | chunk-6 |
-| chunk-8 | Codex 디스크 스캔 + OS 자동시작 + 마이그 | pending | chunk-7 |
+| chunk-8 | Codex 디스크 스캔 + OS 자동시작 + 마이그 | done | chunk-7 |

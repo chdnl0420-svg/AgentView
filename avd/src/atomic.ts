@@ -1,15 +1,18 @@
 // Atomic JSON read/write — temp file + rename.
 // rename() is atomic on POSIX and on NTFS (MoveFileEx with REPLACE
-// flag). Parallel writers serialize through the per-path mutex below
-// so the *last* completed write wins and partial state is never on
-// disk under the canonical name.
+// flag). Parallel writers serialize through an in-process queue plus a
+// lock directory next to the target file, so separate AVD processes also
+// reload and write catalog/roster state one at a time.
 
 import { promises as fs } from 'node:fs';
 import { dirname, basename } from 'node:path';
 
 const inflight = new Map<string, Promise<unknown>>();
+const LOCK_RETRY_MS = 20;
+const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_STALE_MS = 60_000;
 
-async function withLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+async function withProcessQueue<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const prev = inflight.get(path) ?? Promise.resolve();
   let release!: () => void;
   const gate = new Promise<void>((res) => { release = res; });
@@ -26,6 +29,55 @@ async function withLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
     release();
     if (inflight.get(path) === tail) inflight.delete(path);
   }
+}
+
+async function withLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  return withProcessQueue(path, async () => {
+    const releaseDiskLock = await acquireDiskLock(path);
+    try {
+      return await fn();
+    } finally {
+      await releaseDiskLock();
+    }
+  });
+}
+
+async function acquireDiskLock(path: string): Promise<() => Promise<void>> {
+  const lockDir = `${path}.lock`;
+  const startedAt = Date.now();
+  await fs.mkdir(dirname(lockDir), { recursive: true });
+
+  for (;;) {
+    try {
+      await fs.mkdir(lockDir);
+      await fs.writeFile(`${lockDir}/owner.json`, JSON.stringify({
+        pid: process.pid,
+        acquiredAt: Date.now(),
+      }), 'utf8');
+      return async () => {
+        await fs.rm(lockDir, { recursive: true, force: true });
+      };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') throw err;
+      await removeStaleLock(lockDir).catch(() => { /* another process owns it */ });
+      if (Date.now() - startedAt > LOCK_TIMEOUT_MS) {
+        throw new Error(`atomic: timed out acquiring lock for ${path}`);
+      }
+      await sleep(LOCK_RETRY_MS);
+    }
+  }
+}
+
+async function removeStaleLock(lockDir: string): Promise<void> {
+  const stat = await fs.stat(lockDir);
+  if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+    await fs.rm(lockDir, { recursive: true, force: true });
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Exposed so catalog/roster can run reload→check→write as one transaction. */
