@@ -6,7 +6,7 @@
 | chunk-1 | types + 진행추적 셋업 | done | — |
 | chunk-2 | avd 패키지 골격 + PID/소켓 lifecycle | done | chunk-1 |
 | chunk-3 | 세션 카탈로그 + Claude 워커 spawn | done | chunk-2 |
-| chunk-4 | conversations 구독 + AgentView 클라이언트 어댑터 | pending | chunk-3 |
+| chunk-4 | conversations 구독 contract + AvdClient | done | chunk-3 |
 | chunk-5 | adoption + Codex 워커 기본 + 다중 클라이언트 | pending | chunk-4 |
 | chunk-6 | WorkerAdapter 인터페이스 + ExternalClaudeAdapter | pending | chunk-5 |
 | chunk-7 | CodexAdapter 본 구현 + resume | pending | chunk-6 |

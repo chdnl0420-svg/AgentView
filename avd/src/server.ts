@@ -1,11 +1,14 @@
-// avd socket server — handshake and lifecycle.
+// avd socket server — handshake + lifecycle + conversation subscriptions.
 //
 // `startServer` opens a Named Pipe (Windows) or AF_UNIX socket (Unix),
-// accepts connections, runs a length-prefixed frame loop, and answers
-// HELLO with WELCOME. Actual worker spawn / dispatch is wired up in
-// chunk-3 and later; chunk-2 only proves the transport works.
+// accepts connections, runs a length-prefixed frame loop, answers
+// HELLO with WELCOME, and routes subscribe-conversation /
+// unsubscribe-conversation CTRL frames through the Subscriptions
+// manager. Unknown CTRL cmds fall through to the chunk-2
+// UNSUPPORTED_FRAME error so existing clients keep working.
 
 import { createServer, type Server, type Socket } from 'node:net';
+import { isAbsolute } from 'node:path';
 import { promises as fs } from 'node:fs';
 import { dirname } from 'node:path';
 import { acquirePid, releasePid } from './pid.js';
@@ -15,24 +18,17 @@ import {
   FRAME_TYPE,
   type FrameTypeValue,
 } from './protocol.js';
+import { Subscriptions } from './subscriptions.js';
 
 export interface ServerHandle {
-  /** Resolved socket path (or named-pipe address). */
   socketPath: string;
-  /** Gracefully shut down: stop accepting, close clients, release pid. */
   close: () => Promise<void>;
 }
 
 export interface ServerOptions {
   pidPath: string;
   socketPath: string;
-  /**
-   * Optional remote-shutdown hook. When a client sends a CTRL frame
-   * with payload `{"cmd":"shutdown"}` the server invokes this and the
-   * caller is expected to close the server + exit the process. This is
-   * how the cross-platform verify script triggers a graceful shutdown
-   * on Windows, where TerminateProcess bypasses SIGINT handlers.
-   */
+  /** Remote-shutdown hook — see chunk-2 verify-lifecycle script. */
   onShutdownRequest?: () => void;
 }
 
@@ -53,56 +49,102 @@ function sendFrame(socket: Socket, type: FrameTypeValue, payload: Buffer): void 
   }
 }
 
+function sendCtrlJson(socket: Socket, value: unknown): void {
+  sendFrame(socket, FRAME_TYPE.CTRL, Buffer.from(JSON.stringify(value), 'utf8'));
+}
+
+function sendErr(socket: Socket, code: string, extra: Record<string, unknown> = {}): void {
+  sendFrame(
+    socket,
+    FRAME_TYPE.ERR,
+    Buffer.from(JSON.stringify({ code, ...extra }), 'utf8')
+  );
+}
+
 function handleFrame(
   slot: ClientSlot,
   type: number,
   payload: Buffer,
+  subscriptions: Subscriptions,
   onShutdownRequest?: () => void
 ): void {
   if (type === FRAME_TYPE.HELLO) {
-    // chunk-2 minimal handshake — sessionList is empty until chunk-3.
     const welcome = JSON.stringify({ version: '0.1.0', sessions: [] });
     sendFrame(slot.socket, FRAME_TYPE.WELCOME, Buffer.from(welcome, 'utf8'));
     return;
   }
   if (type === FRAME_TYPE.CTRL) {
-    let cmd: string | undefined;
-    try { cmd = (JSON.parse(payload.toString('utf8')) as { cmd?: string }).cmd; } catch { /* fallthrough */ }
+    let body: { cmd?: string; sessionId?: string; conversationPath?: string; intervalMs?: number } | undefined;
+    try {
+      body = JSON.parse(payload.toString('utf8')) as typeof body;
+    } catch {
+      sendErr(slot.socket, 'UNSUPPORTED_FRAME', { frameType: type });
+      return;
+    }
+    const cmd = body?.cmd;
     if (cmd === 'shutdown' && onShutdownRequest) {
-      // ACK so the client can wait for the server-side close cleanly.
-      sendFrame(slot.socket, FRAME_TYPE.CTRL, Buffer.from('{"ok":true}', 'utf8'));
+      sendCtrlJson(slot.socket, { ok: true });
       onShutdownRequest();
       return;
     }
+    if (cmd === 'subscribe-conversation') {
+      const sessionId = body?.sessionId;
+      const conversationPath = body?.conversationPath;
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        sendErr(slot.socket, 'INVALID_SESSION');
+        return;
+      }
+      if (typeof conversationPath !== 'string' || !isAbsolute(conversationPath)) {
+        sendErr(slot.socket, 'INVALID_PATH');
+        return;
+      }
+      const watchOpts = typeof body?.intervalMs === 'number' ? { intervalMs: body.intervalMs } : {};
+      subscriptions
+        .subscribe(sessionId, conversationPath, slot.socket, watchOpts)
+        .then((r) => sendCtrlJson(slot.socket, { ok: true, sessionId, initialOffset: r.initialOffset }))
+        .catch((err) => sendErr(slot.socket, 'SUBSCRIBE_FAILED', { reason: String((err as Error).message ?? err) }));
+      return;
+    }
+    if (cmd === 'unsubscribe-conversation') {
+      const sessionId = body?.sessionId;
+      if (typeof sessionId !== 'string' || sessionId.length === 0) {
+        sendErr(slot.socket, 'INVALID_SESSION');
+        return;
+      }
+      subscriptions.unsubscribe(sessionId, slot.socket);
+      sendCtrlJson(slot.socket, { ok: true });
+      return;
+    }
+    // Unknown cmd — fall through to UNSUPPORTED_FRAME for chunk-2 compatibility.
   }
-  // Unknown frame in chunk-2 — answer with ERR so the client can detect.
-  const err = JSON.stringify({ code: 'UNSUPPORTED_FRAME', frameType: type });
-  sendFrame(slot.socket, FRAME_TYPE.ERR, Buffer.from(err, 'utf8'));
+  sendErr(slot.socket, 'UNSUPPORTED_FRAME', { frameType: type });
 }
 
 function attachClient(
   socket: Socket,
   clients: Set<Socket>,
+  subscriptions: Subscriptions,
   onShutdownRequest?: () => void
 ): void {
   const slot: ClientSlot = { socket, inbox: Buffer.alloc(0) };
   clients.add(socket);
-  socket.on('close', () => { clients.delete(socket); });
+  socket.on('close', () => {
+    subscriptions.removeAll(socket);
+    clients.delete(socket);
+  });
   socket.on('data', (chunk) => {
     slot.inbox = Buffer.concat([slot.inbox, chunk]);
-    // Drain as many complete frames as the buffer holds.
     for (;;) {
       let decoded;
       try {
         decoded = decodeFrame(slot.inbox);
       } catch (e) {
-        // Protocol error — close this client.
         socket.destroy(e as Error);
         return;
       }
       if (!decoded) return;
       slot.inbox = decoded.rest;
-      handleFrame(slot, decoded.type, decoded.payload, onShutdownRequest);
+      handleFrame(slot, decoded.type, decoded.payload, subscriptions, onShutdownRequest);
     }
   });
   socket.on('error', () => { /* swallow */ });
@@ -110,17 +152,19 @@ function attachClient(
 
 export async function startServer(opts: ServerOptions): Promise<ServerHandle> {
   await acquirePid(opts.pidPath);
-  // Per-instance client set so two servers in the same process don't
-  // interfere with each other on close().
   const clients = new Set<Socket>();
+  const subscriptions = new Subscriptions((sock, push) => {
+    sendCtrlJson(sock, { event: 'conversation-appended', ...push });
+  });
 
   try {
-    // On Unix the socket file must not pre-exist.
     if (!opts.socketPath.startsWith('\\\\.\\pipe\\')) {
       await fs.mkdir(dirname(opts.socketPath), { recursive: true });
       await safeUnlink(opts.socketPath);
     }
-    const server: Server = createServer((sock) => attachClient(sock, clients, opts.onShutdownRequest));
+    const server: Server = createServer((sock) =>
+      attachClient(sock, clients, subscriptions, opts.onShutdownRequest)
+    );
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
       server.listen(opts.socketPath, () => {
@@ -130,9 +174,8 @@ export async function startServer(opts: ServerOptions): Promise<ServerHandle> {
     });
 
     const close = async (): Promise<void> => {
-      // Force-disconnect all client sockets first; otherwise server.close()
-      // waits indefinitely for them to end on their own.
       for (const sock of clients) {
+        subscriptions.removeAll(sock);
         try { sock.destroy(); } catch { /* ignore */ }
       }
       clients.clear();
@@ -145,8 +188,6 @@ export async function startServer(opts: ServerOptions): Promise<ServerHandle> {
 
     return { socketPath: opts.socketPath, close };
   } catch (err) {
-    // Listen / setup failed AFTER we grabbed the pid file. Release it so
-    // a retry in the same process is not blocked by our own live pid.
     if (!opts.socketPath.startsWith('\\\\.\\pipe\\')) {
       await safeUnlink(opts.socketPath);
     }
