@@ -1,0 +1,35 @@
+{
+  "name": "avd",
+  "version": "0.1.0",
+  "description": "AgentView Daemon — Worker lifecycle for Claude/Codex CLIs",
+  "type": "module",
+  "main": "./dist/daemon.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js"
+    }
+  },
+  "bin": {
+    "avd": "./dist/daemon.js"
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test src/__tests__/*.test.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.16.0"
+  },
+  "license": "MIT",
+  "private": true
+}

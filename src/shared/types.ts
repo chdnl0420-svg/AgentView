@@ -7,6 +7,16 @@ export type SessionStatus =
   | 'completed'
   | 'unknown';
 
+/**
+ * Which backend a Session is running on. Drives WorkerAdapter selection
+ * in avd: `claude` = avd spawns claude CLI directly, `external-claude`
+ * = avd routes through the existing ~/.claude/daemon, `codex` = avd
+ * spawns codex CLI with --json. Defaults to 'claude' when absent so
+ * pre-existing catalog entries keep working.
+ */
+export type BackendKind = 'claude' | 'external-claude' | 'codex';
+export type SessionBackend = 'avd' | BackendKind;
+
 export interface BgSession {
   pid: number;
   sessionId: string;
@@ -18,7 +28,6 @@ export interface BgSession {
   entrypoint?: string;
   name?: string;
   agent?: string;
-  backend?: SessionBackend;
   jobId?: string;
   status: SessionStatus;
   alive: boolean;
@@ -28,6 +37,7 @@ export interface BgSession {
   messageCount?: number;
   lastUserText?: string;
   lastAssistantText?: string;
+  backend?: SessionBackend;
 }
 
 export interface ScanSessionsResult {
@@ -86,8 +96,6 @@ export type PermissionMode =
   | 'acceptEdits'
   | 'bypassPermissions'
   | 'plan';
-
-export type SessionBackend = 'avd' | 'claude' | 'codex';
 
 export interface NewSessionInput {
   prompt: string;
