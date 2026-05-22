@@ -40,6 +40,8 @@ export interface StartSessionInput {
   name?: string | null;
   model?: string | null;
   permissionMode?: string | null;
+  resumeSessionId?: string | null;
+  conversationPath?: string | null;
 }
 
 export interface StartSessionAck {
@@ -217,6 +219,8 @@ export class AvdClient extends EventEmitter {
       name: input.name ?? null,
       model: input.model ?? null,
       permissionMode: input.permissionMode ?? null,
+      resumeSessionId: input.resumeSessionId ?? null,
+      conversationPath: input.conversationPath ?? null,
     });
     return reply as unknown as StartSessionAck;
   }

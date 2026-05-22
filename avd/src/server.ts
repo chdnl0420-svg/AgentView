@@ -51,6 +51,8 @@ export interface StartWorkerRequest extends SpawnRequest {
   name?: string | null;
   model?: string | null;
   permissionMode?: string | null;
+  resumeSessionId?: string | null;
+  conversationPath?: string | null;
 }
 
 interface StartSessionDeps extends Pick<ServerOptions, 'catalog' | 'roster' | 'workerFactory'> {
@@ -103,6 +105,10 @@ function parseStartSessionRequest(body: Record<string, unknown>): StartWorkerReq
   if (!sessionId || !cwd || !isAbsolute(cwd) || !BACKENDS.has(backendRaw as BackendKind)) {
     return null;
   }
+  const conversationPath = asOptionalString(body.conversationPath);
+  if (conversationPath && !isAbsolute(conversationPath)) {
+    return null;
+  }
   return {
     sessionId,
     cwd,
@@ -112,6 +118,8 @@ function parseStartSessionRequest(body: Record<string, unknown>): StartWorkerReq
     name: asOptionalString(body.name),
     model: asOptionalString(body.model),
     permissionMode: asOptionalString(body.permissionMode),
+    resumeSessionId: asOptionalString(body.resumeSessionId),
+    conversationPath,
   };
 }
 
@@ -141,6 +149,7 @@ async function startWorkerSession(
       startedAt,
     });
     rosterRegistered = true;
+    const conversationPath = worker.conversationPath ?? req.conversationPath ?? undefined;
     await opts.catalog.add({
       sessionId: req.sessionId,
       backend: req.backend,
@@ -149,6 +158,7 @@ async function startWorkerSession(
       status: 'running',
       pid: worker.pid,
       name: req.name ?? undefined,
+      conversationPath,
     });
   } catch (err) {
     if (rosterRegistered) {

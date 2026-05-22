@@ -102,7 +102,11 @@ async function main(): Promise<void> {
       pidAlreadyHeld: true,
       catalog: adopt.catalog,
       roster: adopt.roster,
-      workerFactory: createWorkerFactory(),
+      workerFactory: createWorkerFactory({
+        codexOptions: {
+          conversationDir: join(DAEMON_DIR, 'conversations'),
+        },
+      }),
       onShutdownRequest: () => { void shutdown('shutdown frame'); },
     });
   } catch (err) {

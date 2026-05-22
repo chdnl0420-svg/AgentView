@@ -103,6 +103,58 @@ test('start-session with injected worker factory returns pid and persists catalo
   }
 });
 
+test('start-session forwards codex resumeSessionId and persists conversationPath', async () => {
+  const { root, cwd, pidPath, socketPath, catalogPath, rosterPath } = freshPaths('codex-contract');
+  let server;
+  let client;
+  try {
+    const catalog = await Catalog.open(catalogPath);
+    const roster = await Roster.open(rosterPath);
+    const conversationPath = join(root, 'codex-session.jsonl');
+    const seen = [];
+    server = await startServer({
+      pidPath,
+      socketPath,
+      catalog,
+      roster,
+      workerFactory: async (req) => {
+        seen.push(req);
+        return {
+          sessionId: req.sessionId,
+          pid: process.pid,
+          conversationPath: req.conversationPath,
+          isAlive: () => true,
+          stop: async () => {},
+        };
+      },
+    });
+    client = new AvdClient();
+    await client.connect(socketPath);
+
+    const ack = await client.startSession({
+      sessionId: 's-codex-contract',
+      cwd,
+      backend: 'codex',
+      prompt: 'resume this',
+      resumeSessionId: 'native-codex-id',
+      conversationPath,
+    });
+
+    assert.deepEqual(ack, { ok: true, sessionId: 's-codex-contract', pid: process.pid });
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].backend, 'codex');
+    assert.equal(seen[0].resumeSessionId, 'native-codex-id');
+    assert.equal(seen[0].conversationPath, conversationPath);
+    const rec = catalog.get('s-codex-contract');
+    assert.equal(rec.backend, 'codex');
+    assert.equal(rec.conversationPath, conversationPath);
+  } finally {
+    if (client) await client.close().catch(() => {});
+    if (server) await server.close().catch(() => {});
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('start-session validates request body before worker factory is called', async () => {
   const { root, pidPath, socketPath, catalogPath, rosterPath } = freshPaths('invalid');
   let server;

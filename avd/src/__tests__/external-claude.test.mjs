@@ -215,12 +215,24 @@ test('ExternalClaudeAdapter rejects when external daemon never registers worker'
   }
 });
 
-test('createWorkerFactory routes only external-claude in chunk-6', async () => {
-  const calls = [];
+test('createWorkerFactory routes external-claude and codex adapters', async () => {
+  const externalCalls = [];
+  const codexCalls = [];
   const factory = createWorkerFactory({
     externalClaude: {
       start: async (request) => {
-        calls.push(request);
+        externalCalls.push(request);
+        return {
+          sessionId: request.sessionId,
+          pid: process.pid,
+          isAlive: () => true,
+          stop: async () => {},
+        };
+      },
+    },
+    codex: {
+      start: async (request) => {
+        codexCalls.push(request);
         return {
           sessionId: request.sessionId,
           pid: process.pid,
@@ -238,10 +250,14 @@ test('createWorkerFactory routes only external-claude in chunk-6', async () => {
     prompt: 'hello',
   });
   assert.equal(handle.pid, process.pid);
-  assert.equal(calls.length, 1);
+  assert.equal(externalCalls.length, 1);
+
+  const codexHandle = await factory({ sessionId: 's-codex', cwd: process.cwd(), backend: 'codex' });
+  assert.equal(codexHandle.pid, process.pid);
+  assert.equal(codexCalls.length, 1);
 
   await assert.rejects(
-    () => factory({ sessionId: 's-codex', cwd: process.cwd(), backend: 'codex' }),
+    () => factory({ sessionId: 's-claude', cwd: process.cwd(), backend: 'claude' }),
     /ADAPTER_UNAVAILABLE/
   );
 });

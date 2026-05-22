@@ -7,6 +7,8 @@ export interface WorkerAdapterRequest extends SpawnRequest {
   name?: string | null;
   model?: string | null;
   permissionMode?: string | null;
+  resumeSessionId?: string | null;
+  conversationPath?: string | null;
 }
 
 export interface WorkerAdapter {
