@@ -5,12 +5,13 @@ import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
-import type { ClaudeRunEvent, NewSessionInput, ResumeMessageInput } from '@shared/types';
+import type { BackendKind, ClaudeRunEvent, NewSessionInput, ResumeMessageInput } from '@shared/types';
 import { sendToBackgroundAgent } from './daemonAttach';
 import { createWorktree } from './git';
 import { rememberOwned } from './ownedSessions';
 import { checkClaudeStatus, ensureDaemonRunning } from './claudePreflight';
 import { appendSessionEvent, updateSessionStatus, writeSessionDoc } from './workspaceStore';
+import { createAvdClient } from './avdClient';
 
 const WORKER_SETTLE_MS = 2500;
 const ATTACH_RETRY_MS = 600;
@@ -42,6 +43,24 @@ const DISPATCH_DIR = join(DAEMON_DIR, 'dispatch');
 const ROSTER_PATH = join(DAEMON_DIR, 'roster.json');
 const JOBS_DIR = join(homedir(), '.claude', 'jobs');
 const DISPATCH_POLL_MS = 200;
+
+type CreateAvdClient = typeof createAvdClient;
+
+interface SessionRunnerOptions {
+  createAvdClient?: CreateAvdClient;
+}
+
+function isAvdEnabled(): boolean {
+  const value = (process.env.AVD_ENABLED ?? '').trim().toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
+function normalizeAgentBackend(agent: string | null | undefined): BackendKind | null {
+  const value = (agent ?? '').trim().toLowerCase();
+  return value === 'claude' || value === 'external-claude' || value === 'codex'
+    ? value
+    : null;
+}
 
 /**
  * Derive a stable session display name from the explicit `args.name` or, if
@@ -255,6 +274,12 @@ function resolveClaudeExe(): string {
  */
 export class SessionRunner extends EventEmitter {
   private slots = new Map<string, PtySlot>();
+  private readonly createAvdClient: CreateAvdClient;
+
+  constructor(options: SessionRunnerOptions = {}) {
+    super();
+    this.createAvdClient = options.createAvdClient ?? createAvdClient;
+  }
 
   pidsBySession(): Map<string, number> {
     const out = new Map<string, number>();
@@ -323,6 +348,10 @@ export class SessionRunner extends EventEmitter {
     }).catch(() => {
       /* best-effort */
     });
+
+    if (isAvdEnabled()) {
+      return this.startViaAvd(sessionId, input, spawnCwd);
+    }
 
     // Preflight — is claude CLI even installed? Is the bg supervisor up?
     // If supervisor is down, kick a bootstrap (claude agents --headless) so
@@ -431,6 +460,46 @@ export class SessionRunner extends EventEmitter {
       await new Promise((r) => setTimeout(r, ATTACH_RETRY_MS));
     }
     throw new Error(`ATTACH_${lastReason || 'UNKNOWN'}`);
+  }
+
+  private async startViaAvd(
+    sessionId: string,
+    input: NewSessionInput,
+    cwd: string
+  ): Promise<{ sessionId: string; pid: number | null; forkedFrom?: null }> {
+    let client: Awaited<ReturnType<CreateAvdClient>> | null = null;
+    try {
+      client = await this.createAvdClient();
+      const ack = await client.startSession({
+        sessionId,
+        cwd,
+        backend: input.backend ?? normalizeAgentBackend(input.agent) ?? 'claude',
+        prompt: input.prompt,
+        name: input.name ?? null,
+        model: input.model ?? null,
+        permissionMode: input.permissionMode ?? null,
+      });
+      this.emit('event', {
+        sessionId: ack.sessionId,
+        type: 'spawn',
+        pid: ack.pid,
+        ts: Date.now()
+      } satisfies ClaudeRunEvent);
+      appendSessionEvent(ack.sessionId, 'spawn', `avd pid=${ack.pid}`).catch(() => undefined);
+      return { sessionId: ack.sessionId, pid: ack.pid };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emit('event', {
+        sessionId,
+        type: 'error',
+        message: `avd start failed: ${message}`,
+        ts: Date.now()
+      } satisfies ClaudeRunEvent);
+      appendSessionEvent(sessionId, 'error', `avd start failed: ${message}`).catch(() => undefined);
+      return { sessionId, pid: null };
+    } finally {
+      if (client) await client.close().catch(() => undefined);
+    }
   }
 
   resumeSession(input: ResumeMessageInput): {

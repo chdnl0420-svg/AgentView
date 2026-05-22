@@ -31,6 +31,22 @@ export interface SubscribeOptions {
   intervalMs?: number;
 }
 
+export interface StartSessionInput {
+  sessionId: string;
+  cwd: string;
+  backend?: 'claude' | 'external-claude' | 'codex' | null;
+  prompt?: string | null;
+  name?: string | null;
+  model?: string | null;
+  permissionMode?: string | null;
+}
+
+export interface StartSessionAck {
+  ok: true;
+  sessionId: string;
+  pid: number;
+}
+
 export class AvdClient extends EventEmitter {
   private socket: Socket | null = null;
   private inbox: Buffer = Buffer.alloc(0);
@@ -187,6 +203,20 @@ export class AvdClient extends EventEmitter {
   async unsubscribeConversation(sessionId: string): Promise<{ ok: true }> {
     const reply = await this.sendCtrlRaw({ cmd: 'unsubscribe-conversation', sessionId });
     return reply as unknown as { ok: true };
+  }
+
+  async startSession(input: StartSessionInput): Promise<StartSessionAck> {
+    const reply = await this.sendCtrlRaw({
+      cmd: 'start-session',
+      sessionId: input.sessionId,
+      cwd: input.cwd,
+      backend: input.backend ?? 'claude',
+      prompt: input.prompt ?? null,
+      name: input.name ?? null,
+      model: input.model ?? null,
+      permissionMode: input.permissionMode ?? null,
+    });
+    return reply as unknown as StartSessionAck;
   }
 
   async close(): Promise<void> {
