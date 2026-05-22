@@ -5,7 +5,7 @@
 //   1. Try the local cache that the `claude` CLI writes after every turn.
 //      That's the same file `/cost` reads, so values are guaranteed to
 //      match what the user sees there.
-//   2. Fall back to the OAuth `claude.ai/api/oauth/usage` endpoint when
+//   2. Fall back to the OAuth `api.anthropic.com/api/oauth/usage` endpoint when
 //      no local cache is present.
 //   3. Never block forever — every IO has a small budget and any failure
 //      collapses to `available:false` so the UI can render "측정 불가"
@@ -159,7 +159,7 @@ const FIVE_HOUR_KEYS = [
 ];
 
 const WEEKLY_KEYS = [
-  // The endpoint returned by claude.ai/api/oauth/usage as of 2026-05 calls
+  // The endpoint returned by api.anthropic.com/api/oauth/usage as of 2026-05 calls
   // the weekly bucket `seven_day` (with a `utilization` percent inside).
   // Keep the historical aliases for older shapes.
   'seven_day',
@@ -200,7 +200,7 @@ function toBucket(b: Record<string, unknown> | undefined): UsageBucket | undefin
   const used = Number(b.used ?? b.consumed ?? b.value ?? 0);
   const limit = Number(b.limit ?? b.max ?? b.quota ?? b.cap ?? 0);
   let pct: number | undefined;
-  // `utilization` is what claude.ai/api/oauth/usage returns (0..100 percent).
+  // `utilization` is what api.anthropic.com/api/oauth/usage returns (0..100 percent).
   // Keep the historical aliases first so any new shape can still override.
   for (const k of ['pct', 'percent', 'percentage', 'usage_percent', 'usagePercent', 'utilization']) {
     const v = (b as Record<string, unknown>)[k];
@@ -291,11 +291,12 @@ export async function fetchUsage(): Promise<UsageData> {
   }
 
   try {
-    const raw = await httpJson('https://claude.ai/api/oauth/usage', {
+    const raw = await httpJson('https://api.anthropic.com/api/oauth/usage', {
       'User-Agent': UA,
       Accept: 'application/json',
+      'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
-      'anthropic-beta': 'claude-code-oauth-2025-10-31'
+      'anthropic-beta': 'oauth-2025-04-20'
     });
     const parsed = parseUsage(raw);
     return {
