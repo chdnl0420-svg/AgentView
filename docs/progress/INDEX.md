@@ -3,7 +3,7 @@
 
 | id | title | status | depends_on |
 |----|-------|--------|------------|
-| chunk-1 | types + 진행추적 셋업 | in-progress | — |
+| chunk-1 | types + 진행추적 셋업 | done | — |
 | chunk-2 | avd 패키지 골격 + PID/소켓 lifecycle | pending | chunk-1 |
 | chunk-3 | 세션 카탈로그 + Claude 워커 spawn | pending | chunk-2 |
 | chunk-4 | conversations 구독 + AgentView 클라이언트 어댑터 | pending | chunk-3 |
