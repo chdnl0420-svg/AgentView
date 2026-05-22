@@ -30,6 +30,13 @@ export interface ServerOptions {
   socketPath: string;
   /** Remote-shutdown hook — see chunk-2 verify-lifecycle script. */
   onShutdownRequest?: () => void;
+  /**
+   * When true, the caller has already taken ownership via `acquirePid` and
+   * startServer should not re-acquire (or release on its own failure path).
+   * Lets daemon.ts run `acquirePid -> bootAdoption -> startServer(...)` so
+   * only the daemon that *owns* the lock ever reconciles persistent state.
+   */
+  pidAlreadyHeld?: boolean;
 }
 
 interface ClientSlot {
@@ -151,7 +158,9 @@ function attachClient(
 }
 
 export async function startServer(opts: ServerOptions): Promise<ServerHandle> {
-  await acquirePid(opts.pidPath);
+  if (!opts.pidAlreadyHeld) {
+    await acquirePid(opts.pidPath);
+  }
   const clients = new Set<Socket>();
   const subscriptions = new Subscriptions((sock, push) => {
     sendCtrlJson(sock, { event: 'conversation-appended', ...push });

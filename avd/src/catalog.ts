@@ -199,6 +199,34 @@ export class Catalog {
     });
   }
 
+  /**
+   * Like `update()`, but a no-op (returns false) when the sessionId is not on
+   * disk. Lets callers (e.g. adoption) avoid pre-check races where another
+   * Catalog instance just added or removed the row.
+   */
+  async updateIfExists(sessionId: string, patch: SessionPatch): Promise<boolean> {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw new Error('catalog: sessionId must be a non-empty string');
+    }
+    assertValidPatch(patch);
+    const safePatch = pickPatch(patch);
+    return withFileLock(this.path, async () => {
+      const live = await readLiveCatalog(this.path);
+      const cur = live.sessions[sessionId];
+      if (!cur) return false;
+      const next: CatalogFile = {
+        version: 1,
+        sessions: {
+          ...live.sessions,
+          [sessionId]: { ...cur, ...safePatch, sessionId, updatedAt: Date.now() },
+        },
+      };
+      await writeFileUnlocked(this.path, next);
+      this.state = next;
+      return true;
+    });
+  }
+
   async remove(sessionId: string): Promise<void> {
     if (typeof sessionId !== 'string' || sessionId.length === 0) {
       throw new Error('catalog: sessionId must be a non-empty string');
