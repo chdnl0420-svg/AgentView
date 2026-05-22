@@ -18,6 +18,7 @@ export interface BgSession {
   entrypoint?: string;
   name?: string;
   agent?: string;
+  backend?: SessionBackend;
   jobId?: string;
   status: SessionStatus;
   alive: boolean;
@@ -86,10 +87,13 @@ export type PermissionMode =
   | 'bypassPermissions'
   | 'plan';
 
+export type SessionBackend = 'avd' | 'claude' | 'codex';
+
 export interface NewSessionInput {
   prompt: string;
   cwd: string;
   agent?: string | null;
+  backend?: SessionBackend | null;
   model?: string | null;
   name?: string | null;
   /** Claude permission mode the new session boots with. Passed via

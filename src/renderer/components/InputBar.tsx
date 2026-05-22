@@ -5,6 +5,7 @@ import type {
   NewSessionInput,
   PermissionMode,
   ResumeMessageInput,
+  SessionBackend,
   SlashCommandEntry
 } from '@shared/types';
 import { shortCwd } from '../lib/format';
@@ -28,6 +29,14 @@ const LAST_MODEL_KEY = 'lastModel';
 const LAST_CWD_KEY = 'lastCwd';
 const WT_ENABLED_KEY = 'wt.enabled';
 const WT_BASE_BRANCH_KEY = 'wt.baseBranch';
+const LAST_BACKEND_KEY = 'lastBackend';
+const NEW_BRANCH_SENTINEL = '__new_branch__';
+
+const BACKENDS: Array<{ value: SessionBackend; label: string; hint: string }> = [
+  { value: 'avd', label: 'AVD', hint: 'AgentView 기본 실행 경로' },
+  { value: 'claude', label: 'Claude Agents', hint: 'Claude Code /agents 기반 실행' },
+  { value: 'codex', label: 'Codex', hint: 'Codex CLI 기반 실행' }
+];
 
 // Claude permission modes — what claude CLI accepts via --permission-mode.
 // 'bypassPermissions' is the user's preferred default (everything auto-runs),
@@ -55,6 +64,18 @@ function loadLastModel(): string {
 function loadLastCwd(fallback: string): string {
   const v = loadJSON<string>(LAST_CWD_KEY, '');
   return typeof v === 'string' && v.trim() ? v : fallback;
+}
+
+function loadLastBackend(): SessionBackend {
+  const v = loadJSON<string>(LAST_BACKEND_KEY, 'avd');
+  return BACKENDS.some((b) => b.value === v) ? (v as SessionBackend) : 'avd';
+}
+
+function isValidBranchName(value: string): boolean {
+  const v = value.trim();
+  if (!v || v.startsWith('/') || v.endsWith('/') || v.endsWith('.')) return false;
+  if (v.includes('..') || v.includes('@{') || v.includes('\\')) return false;
+  return !/[\s~^:?*\[\]\x00-\x1f]/.test(v);
 }
 
 export interface InputDraft {
@@ -128,6 +149,9 @@ export function InputBar(props: InputBarProps) {
     [isNew]
   );
   const [agent, setAgent] = useState<string>(isNew ? '' : props.fixedAgent ?? '');
+  const [backend, setBackendState] = useState<SessionBackend>(() =>
+    isNew ? loadLastBackend() : 'claude'
+  );
   const [model, setModel] = useState<string>(() => {
     if (!isNew && props.fixedModel) return props.fixedModel;
     return loadLastModel();
@@ -170,7 +194,17 @@ export function InputBar(props: InputBarProps) {
   const [wtBaseBranch, setWtBaseBranchState] = useState<string>(() =>
     isNew ? loadJSON<string>(WT_BASE_BRANCH_KEY, '') : ''
   );
+  const [newBranchEditing, setNewBranchEditing] = useState(false);
+  const [newBranchDraft, setNewBranchDraft] = useState('');
+  const [newBranch, setNewBranch] = useState<string | null>(null);
   const [branchInfo, setBranchInfo] = useState<GitBranchesResult | null>(null);
+
+  const setBackend = useCallback((v: SessionBackend) => {
+    setBackendState(v);
+    if (isNew) saveJSON(LAST_BACKEND_KEY, v);
+    window.dispatchEvent(new CustomEvent('agentview:backend-changed', { detail: v }));
+    if (v !== 'claude') setAgent('');
+  }, [isNew]);
 
   const setWtEnabled = useCallback((v: boolean) => {
     setWtEnabledState(v);
@@ -186,7 +220,9 @@ export function InputBar(props: InputBarProps) {
   // no longer exists in this repo).
   useEffect(() => {
     if (!branchInfo?.isRepo) return;
-    const valid = wtBaseBranch && branchInfo.branches.includes(wtBaseBranch);
+    const valid =
+      wtBaseBranch === NEW_BRANCH_SENTINEL ||
+      (wtBaseBranch && branchInfo.branches.includes(wtBaseBranch));
     if (!valid) {
       const fallback = branchInfo.current || branchInfo.branches[0] || '';
       if (fallback) setWtBaseBranchState(fallback);
@@ -438,9 +474,18 @@ export function InputBar(props: InputBarProps) {
         const wtOn = wtEnabled && !!effectiveBranchInfo?.isRepo;
         let worktreePath: string | null = null;
         let baseBranch: string | null = null;
+        let finalNewBranch: string | null = null;
         if (wtOn) {
+          const branchFromInput = (newBranch || '').trim();
+          if (branchFromInput && !isValidBranchName(branchFromInput)) {
+            alert('새 브랜치 이름에 사용할 수 없는 문자가 있습니다.');
+            return;
+          }
+          finalNewBranch = branchFromInput || null;
           baseBranch =
-            (wtBaseBranch && effectiveBranchInfo!.branches.includes(wtBaseBranch)
+            (wtBaseBranch &&
+            wtBaseBranch !== NEW_BRANCH_SENTINEL &&
+            effectiveBranchInfo!.branches.includes(wtBaseBranch)
               ? wtBaseBranch
               : effectiveBranchInfo!.current) ||
             effectiveBranchInfo!.branches[0] ||
@@ -461,13 +506,14 @@ export function InputBar(props: InputBarProps) {
         await props.onSend({
           prompt: finalPrompt,
           cwd: cwd.trim() || props.defaultCwd,
-          agent: agent || null,
+          agent: backend === 'claude' ? agent || null : null,
+          backend,
           model: model || null,
           name: null,
           permissionMode,
           worktreePath,
           baseBranch,
-          newBranch: null
+          newBranch: finalNewBranch
         });
       } else {
         await props.onSend({
@@ -630,16 +676,32 @@ export function InputBar(props: InputBarProps) {
         <>
           <div className="input-controls">
             <div className="control">
-              <label htmlFor="agent-select">에이전트</label>
-              <select id="agent-select" value={agent} onChange={(e) => setAgent(e.target.value)}>
-                <option value="">기본 (claude)</option>
-                {props.agents.map((a) => (
-                  <option key={`${a.scope}:${a.name}`} value={a.name}>
-                    {a.scope === 'project' ? '◆ ' : ''}{a.name}
+              <label htmlFor="backend-select">백엔드</label>
+              <select
+                id="backend-select"
+                value={backend}
+                onChange={(e) => setBackend(e.target.value as SessionBackend)}
+              >
+                {BACKENDS.map((b) => (
+                  <option key={b.value} value={b.value} title={b.hint}>
+                    {b.label}
                   </option>
                 ))}
               </select>
             </div>
+            {backend === 'claude' && (
+              <div className="control">
+                <label htmlFor="agent-select">에이전트</label>
+                <select id="agent-select" value={agent} onChange={(e) => setAgent(e.target.value)}>
+                  <option value="">기본 (claude)</option>
+                  {props.agents.map((a) => (
+                    <option key={`${a.scope}:${a.name}`} value={a.name}>
+                      {a.scope === 'project' ? '◆ ' : ''}{a.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="control">
               <label htmlFor="model-select">모델</label>
               <select
@@ -694,21 +756,67 @@ export function InputBar(props: InputBarProps) {
             {wtEnabled && branchInfo?.isRepo && (
               <div className="control wt-base">
                 <label htmlFor="wt-base-select">시작 브런치</label>
-                <select
-                  id="wt-base-select"
-                  value={wtBaseBranch}
-                  onChange={(e) => setWtBaseBranch(e.target.value)}
-                  title="새 워크트리를 이 브런치 기반으로 생성합니다"
-                >
-                  {!branchInfo.branches.includes(wtBaseBranch) && wtBaseBranch && (
-                    <option value={wtBaseBranch}>{wtBaseBranch}</option>
-                  )}
-                  {branchInfo.branches.map((b) => (
-                    <option key={b} value={b}>
-                      {b === branchInfo.current ? `${b}  (현재)` : b}
+                {newBranchEditing ? (
+                  <input
+                    id="wt-base-select"
+                    className="wt-new-branch"
+                    value={newBranchDraft}
+                    autoFocus
+                    placeholder="새 브랜치 이름"
+                    onChange={(e) => setNewBranchDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const next = newBranchDraft.trim();
+                        if (!isValidBranchName(next)) {
+                          alert('새 브랜치 이름에 사용할 수 없는 문자가 있습니다.');
+                          return;
+                        }
+                        setNewBranch(next);
+                        setWtBaseBranch(NEW_BRANCH_SENTINEL);
+                        setNewBranchEditing(false);
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setNewBranchEditing(false);
+                        setNewBranchDraft(newBranch || '');
+                        if (wtBaseBranch === NEW_BRANCH_SENTINEL) {
+                          setWtBaseBranch(branchInfo.current || branchInfo.branches[0] || '');
+                          setNewBranch(null);
+                        }
+                      }
+                    }}
+                  />
+                ) : (
+                  <select
+                    id="wt-base-select"
+                    value={wtBaseBranch}
+                    onChange={(e) => {
+                      if (e.target.value === NEW_BRANCH_SENTINEL) {
+                        setNewBranchEditing(true);
+                        setNewBranchDraft(newBranch || '');
+                        setWtBaseBranch(NEW_BRANCH_SENTINEL);
+                        return;
+                      }
+                      setNewBranch(null);
+                      setWtBaseBranch(e.target.value);
+                    }}
+                    title="새 워크트리를 이 브런치 기반으로 생성합니다"
+                  >
+                    {!branchInfo.branches.includes(wtBaseBranch) &&
+                      wtBaseBranch &&
+                      wtBaseBranch !== NEW_BRANCH_SENTINEL && (
+                        <option value={wtBaseBranch}>{wtBaseBranch}</option>
+                      )}
+                    {branchInfo.branches.map((b) => (
+                      <option key={b} value={b}>
+                        {b === branchInfo.current ? `${b}  (현재)` : b}
+                      </option>
+                    ))}
+                    <option value={NEW_BRANCH_SENTINEL}>
+                      {newBranch ? `+ 새 브랜치: ${newBranch}` : '+ 새 브랜치'}
                     </option>
-                  ))}
-                </select>
+                  </select>
+                )}
               </div>
             )}
           </div>
