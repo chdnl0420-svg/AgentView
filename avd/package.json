@@ -4,6 +4,17 @@
   "description": "AgentView Daemon — Worker lifecycle for Claude/Codex CLIs",
   "type": "module",
   "main": "./dist/daemon.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./daemon": {
+      "types": "./dist/daemon.d.ts",
+      "import": "./dist/daemon.js"
+    }
+  },
   "bin": {
     "avd": "./dist/daemon.js"
   },

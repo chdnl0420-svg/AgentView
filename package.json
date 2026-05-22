@@ -7,11 +7,11 @@
   "license": "MIT",
   "workspaces": ["avd"],
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "npm -w avd run build && electron-vite dev",
+    "build": "npm -w avd run build && electron-vite build",
     "preview": "electron-vite preview",
-    "build:win": "electron-vite build && electron-builder --win",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "build:win": "npm run build && electron-builder --win",
+    "typecheck": "npm -w avd run build && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "postinstall": "node scripts/postinstall-node-pty.cjs"
   },
   "dependencies": {
