@@ -177,6 +177,22 @@ export function SessionDetail({
     const t = window.setTimeout(() => setBadgeToast(null), 3000);
     return () => window.clearTimeout(t);
   }, [badgeToast]);
+  useEffect(() => {
+    if (!permDropdownOpen && !modelDropdownOpen) return;
+    const close = () => {
+      setPermDropdownOpen(false);
+      setModelDropdownOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [permDropdownOpen, modelDropdownOpen]);
   // Goal text shown in the goal-row: workspace doc prompt first, then last
   // user message, then nothing (the row hides itself).
   const goalText = workspacePrompt || null;
@@ -798,6 +814,7 @@ export function SessionDetail({
                 type="button"
                 className="perm-tag clickable"
                 title="권한 모드 (다음 메시지부터 적용)"
+                onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setPermDropdownOpen((v) => !v)}
               >
                 🛡 {permLabel(data.meta.permissionMode as string)}
@@ -805,7 +822,7 @@ export function SessionDetail({
               </button>
             )}
             {permDropdownOpen && (
-              <div className="badge-dropdown" role="menu">
+              <div className="badge-dropdown" role="menu" onMouseDown={(e) => e.stopPropagation()}>
                 {(['bypassPermissions','acceptEdits','default','plan'] as const).map((m) => (
                   <button
                     key={m}
@@ -827,6 +844,7 @@ export function SessionDetail({
                 type="button"
                 className="model-tag clickable"
                 title="모델 (다음 메시지부터 적용)"
+                onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => setModelDropdownOpen((v) => !v)}
               >
                 🧠 {modelLabel}
@@ -834,7 +852,7 @@ export function SessionDetail({
               </button>
             )}
             {modelDropdownOpen && (
-              <div className="badge-dropdown" role="menu">
+              <div className="badge-dropdown" role="menu" onMouseDown={(e) => e.stopPropagation()}>
                 {(['opus','sonnet','haiku'] as const).map((m) => (
                   <button
                     key={m}

@@ -166,7 +166,7 @@ select option:disabled {
   overflow: hidden;
 }
 .app.no-chrome {
-  grid-template-rows: 1fr;
+  grid-template-rows: auto auto auto 1fr;
 }
 
 .topbar {
@@ -584,8 +584,10 @@ select option:disabled {
   display: flex; gap: 8px;
   font-size: 11.5px; color: var(--text-muted);
   font-family: var(--font-mono); flex-wrap: wrap; align-items: center;
+  position: relative;
 }
-.detail-head .model-tag {
+.detail-head .model-tag,
+.detail-head .perm-tag {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -598,6 +600,45 @@ select option:disabled {
   font-family: var(--font-sans);
   letter-spacing: 0.2px;
   text-transform: lowercase;
+}
+.detail-head .perm-tag {
+  border: 1px solid rgba(109, 217, 168, 0.22);
+  background: rgba(109, 217, 168, 0.14);
+  color: #9be7c4;
+  cursor: pointer;
+}
+.detail-head .model-tag.clickable {
+  border: 1px solid rgba(179, 136, 255, 0.22);
+  cursor: pointer;
+}
+.detail-head .caret {
+  font-size: 9px;
+  opacity: 0.8;
+}
+.detail-head .badge-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 150px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elev-2);
+  box-shadow: var(--shadow-card);
+  z-index: 20;
+}
+.detail-head .badge-dropdown button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.detail-head .badge-dropdown button:hover {
+  background: var(--bg-elev-3);
 }
 .detail-body { flex: 1; overflow-y: auto; padding: 18px 22px; background: var(--bg-base); }
 .empty-detail {
@@ -1246,6 +1287,17 @@ select option:disabled {
   height: auto;
   outline: none;
   cursor: pointer;
+}
+.input-controls .wt-new-branch {
+  background: transparent;
+  color: var(--text-primary);
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 130px;
+  height: auto;
+  outline: none;
 }
 .input-controls .cwd-pick {
   background: transparent;
@@ -1974,6 +2026,7 @@ button.ask-panel-option.selected .ask-panel-key {
 /* Delete mode — checkboxes on cards + visual "checked" emphasis */
 .session-card.delete-mode {
   cursor: pointer;
+  padding-left: 34px;
 }
 .session-card.delete-mode:hover {
   border-color: var(--crashed);
@@ -1985,7 +2038,7 @@ button.ask-panel-option.selected .ask-panel-key {
 }
 .card-delete-check {
   position: absolute;
-  top: 10px; right: 10px;
+  top: 10px; left: 10px;
   width: 18px; height: 18px;
   accent-color: var(--crashed);
   z-index: 2;

@@ -5,7 +5,8 @@ import type {
   ClaudeRunEvent,
   NewSessionInput,
   RunningSessionInfo,
-  ScanSessionsResult
+  ScanSessionsResult,
+  SessionBackend
 } from '@shared/types';
 import { SessionCard } from './components/SessionCard';
 import { SessionList } from './components/SessionList';
@@ -20,6 +21,7 @@ import { getViewMode, setViewMode, type ViewMode } from './lib/viewMode';
 const NEW_DRAFT_KEY = 'draft.new';
 const RESUME_DRAFTS_KEY = 'draft.resume';
 const RENAMES_KEY = 'sessionRenames';
+const LAST_BACKEND_KEY = 'lastBackend';
 
 const DEFAULT_CWD = 'D:\\Project\\VisualAgents';
 const FLASH_MS = 900;
@@ -74,6 +76,7 @@ interface PendingSession {
   prompt: string;
   cwd: string;
   agent: string;
+  backend?: BgSession['backend'];
   name: string;
 }
 
@@ -103,6 +106,7 @@ function pendingToBgSession(p: PendingSession): BgSession {
     entrypoint: 'pending',
     name: p.name,
     agent: p.agent,
+    backend: p.backend,
     jobId: (p.realSessionId || p.tempId).slice(0, 8),
     status: 'running',
     alive: true,
@@ -131,6 +135,10 @@ export default function App() {
   const viewModeRef = useRef<ViewMode>(viewMode);
   const [loading, setLoading] = useState(true);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeStatus | null>(null);
+  const [activeBackend, setActiveBackend] = useState<SessionBackend>(() => {
+    const saved = loadJSON<string>(LAST_BACKEND_KEY, 'avd');
+    return saved === 'claude' || saved === 'codex' || saved === 'avd' ? saved : 'avd';
+  });
   const [now, setNow] = useState(Date.now());
   const [flash, setFlash] = useState<Map<string, number>>(() => new Map());
   const [toast, setToast] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
@@ -180,13 +188,19 @@ export default function App() {
   // selection or window focus changes so the new name lands on the cards.
   useEffect(() => {
     const onFocus = () => setRenames(loadRenames());
+    const onBackendChanged = (e: Event) => {
+      const next = (e as CustomEvent<SessionBackend>).detail;
+      if (next === 'claude' || next === 'codex' || next === 'avd') setActiveBackend(next);
+    };
     window.addEventListener('focus', onFocus);
     window.addEventListener('storage', onFocus);
     window.addEventListener('agentview:renames-changed', onFocus as EventListener);
+    window.addEventListener('agentview:backend-changed', onBackendChanged as EventListener);
     return () => {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('storage', onFocus);
       window.removeEventListener('agentview:renames-changed', onFocus as EventListener);
+      window.removeEventListener('agentview:backend-changed', onBackendChanged as EventListener);
     };
   }, []);
   const reloadTimer = useRef<number | null>(null);
@@ -533,6 +547,7 @@ export default function App() {
           prompt: input.prompt,
           cwd: input.cwd,
           agent: input.agent || 'claude',
+          backend: input.backend || 'claude',
           name: displayName
         },
         ...prev
@@ -543,6 +558,7 @@ export default function App() {
           prompt: input.prompt,
           cwd: input.cwd,
           agent: input.agent ?? null,
+          backend: input.backend ?? null,
           model: input.model ?? null,
           name: input.name ?? null,
           permissionMode: input.permissionMode ?? null,
@@ -583,7 +599,7 @@ export default function App() {
     </div>
   ) : null;
 
-  const claudeStatusBanner = claudeStatus && !claudeStatus.cliPath ? (
+  const claudeStatusBanner = activeBackend === 'claude' && claudeStatus && !claudeStatus.cliPath ? (
     <div className="claude-status-banner error" role="status">
       <span>⚠</span>
       <span>Claude Code CLI 가 설치돼있지 않습니다.</span>
@@ -593,7 +609,7 @@ export default function App() {
         onClick={() => window.av.shell.openPath('https://github.com/anthropics/claude-code')}
       >설치 안내</button>
     </div>
-  ) : claudeStatus && claudeStatus.cliPath && !claudeStatus.daemonAlive ? (
+  ) : activeBackend === 'claude' && claudeStatus && claudeStatus.cliPath && !claudeStatus.daemonAlive ? (
     <div className="claude-status-banner warn" role="status">
       <span>◐</span>
       <span>Claude Code 백그라운드 데몬이 꺼져있습니다 — 새 작업 시작 시 자동으로 깨웁니다.</span>
