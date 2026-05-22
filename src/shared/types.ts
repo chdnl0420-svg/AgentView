@@ -7,6 +7,15 @@ export type SessionStatus =
   | 'completed'
   | 'unknown';
 
+/**
+ * Which backend a Session is running on. Drives WorkerAdapter selection
+ * in avd: `claude` = avd spawns claude CLI directly, `external-claude`
+ * = avd routes through the existing ~/.claude/daemon, `codex` = avd
+ * spawns codex CLI with --json. Defaults to 'claude' when absent so
+ * pre-existing catalog entries keep working.
+ */
+export type BackendKind = 'claude' | 'external-claude' | 'codex';
+
 export interface BgSession {
   pid: number;
   sessionId: string;
@@ -27,6 +36,7 @@ export interface BgSession {
   messageCount?: number;
   lastUserText?: string;
   lastAssistantText?: string;
+  backend?: BackendKind;
 }
 
 export interface ScanSessionsResult {
@@ -103,6 +113,9 @@ export interface NewSessionInput {
   baseBranch?: string | null;
   /** Optional new branch name to create inside the worktree. */
   newBranch?: string | null;
+  /** Which backend the new session should run on. When null/undefined,
+   *  avd treats this as the default backend ('claude'). */
+  backend?: BackendKind | null;
 }
 
 export interface ResumeMessageInput {
