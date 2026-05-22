@@ -474,6 +474,7 @@ export class SessionRunner extends EventEmitter {
         sessionId,
         cwd,
         backend: input.backend ?? normalizeAgentBackend(input.agent) ?? 'claude',
+        agent: input.agent ?? null,
         prompt: input.prompt,
         name: input.name ?? null,
         model: input.model ?? null,

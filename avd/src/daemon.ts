@@ -14,6 +14,7 @@ import { adoptLive, type AdoptLiveResult } from './adoption.js';
 import { acquirePid, releasePid } from './pid.js';
 import { getProcessInfo } from './process-info.js';
 import { startServer, type ServerHandle } from './server.js';
+import { createWorkerFactory } from './workers/index.js';
 
 const HOME = homedir();
 const DAEMON_DIR = join(HOME, '.agentview', 'daemon');
@@ -99,6 +100,9 @@ async function main(): Promise<void> {
       pidPath: PID_PATH,
       socketPath: SOCKET_PATH,
       pidAlreadyHeld: true,
+      catalog: adopt.catalog,
+      roster: adopt.roster,
+      workerFactory: createWorkerFactory(),
       onShutdownRequest: () => { void shutdown('shutdown frame'); },
     });
   } catch (err) {

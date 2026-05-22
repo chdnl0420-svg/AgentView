@@ -74,6 +74,7 @@ test('start-session with injected worker factory returns pid and persists catalo
       sessionId: 's-success',
       cwd,
       backend: 'claude',
+      agent: 'planner',
       prompt: 'hello',
       name: 'Start success',
     });
@@ -82,6 +83,7 @@ test('start-session with injected worker factory returns pid and persists catalo
     assert.equal(seen.length, 1);
     assert.equal(seen[0].cwd, cwd);
     assert.equal(seen[0].prompt, 'hello');
+    assert.equal(seen[0].agent, 'planner');
 
     const rec = catalog.get('s-success');
     assert.equal(rec.backend, 'claude');
@@ -157,18 +159,22 @@ test('start-session duplicate roster failure leaves existing catalog entry intac
       startedAt: 1000,
     });
 
+    let called = false;
     let stopped = false;
     server = await startServer({
       pidPath,
       socketPath,
       catalog,
       roster,
-      workerFactory: async (req) => ({
-        sessionId: req.sessionId,
-        pid: process.pid + 1,
-        isAlive: () => true,
-        stop: async () => { stopped = true; },
-      }),
+      workerFactory: async (req) => {
+        called = true;
+        return {
+          sessionId: req.sessionId,
+          pid: process.pid + 1,
+          isAlive: () => true,
+          stop: async () => { stopped = true; },
+        };
+      },
     });
     client = new AvdClient();
     await client.connect(socketPath);
@@ -178,7 +184,8 @@ test('start-session duplicate roster failure leaves existing catalog entry intac
       /START_SESSION_FAILED/
     );
 
-    assert.equal(stopped, true);
+    assert.equal(called, false);
+    assert.equal(stopped, false);
     const rec = catalog.get('s-existing');
     assert.equal(rec.name, 'Existing');
     assert.equal(rec.pid, process.pid);
@@ -187,6 +194,68 @@ test('start-session duplicate roster failure leaves existing catalog entry intac
     assert.equal(worker.pid, process.pid);
   } finally {
     if (client) await client.close().catch(() => {});
+    if (server) await server.close().catch(() => {});
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('concurrent duplicate start-session calls only invoke worker factory once', async () => {
+  const { root, cwd, pidPath, socketPath, catalogPath, rosterPath } = freshPaths('concurrent-duplicate');
+  let server;
+  let clientA;
+  let clientB;
+  try {
+    const catalog = await Catalog.open(catalogPath);
+    const roster = await Roster.open(rosterPath);
+    let releaseFactory;
+    const factoryGate = new Promise((resolve) => { releaseFactory = resolve; });
+    let calls = 0;
+    let stopped = 0;
+    server = await startServer({
+      pidPath,
+      socketPath,
+      catalog,
+      roster,
+      workerFactory: async (req) => {
+        calls++;
+        const pid = process.pid + 100 + calls;
+        await factoryGate;
+        return {
+          sessionId: req.sessionId,
+          pid,
+          isAlive: () => true,
+          stop: async () => { stopped++; },
+        };
+      },
+    });
+    clientA = new AvdClient();
+    clientB = new AvdClient();
+    await clientA.connect(socketPath);
+    await clientB.connect(socketPath);
+
+    const first = clientA
+      .startSession({ sessionId: 's-race', cwd, backend: 'external-claude', prompt: 'a' })
+      .then((value) => ({ status: 'fulfilled', value }))
+      .catch((reason) => ({ status: 'rejected', reason }));
+    const second = clientB
+      .startSession({ sessionId: 's-race', cwd, backend: 'external-claude', prompt: 'b' })
+      .then((value) => ({ status: 'fulfilled', value }))
+      .catch((reason) => ({ status: 'rejected', reason }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(calls, 1);
+
+    releaseFactory();
+    const results = await Promise.all([first, second]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((r) => r.status === 'rejected').length, 1);
+    assert.equal(stopped, 0);
+
+    const rec = catalog.get('s-race');
+    assert.equal(rec.backend, 'external-claude');
+    assert.equal(roster.forSession('s-race')?.sessionId, 's-race');
+  } finally {
+    if (clientA) await clientA.close().catch(() => {});
+    if (clientB) await clientB.close().catch(() => {});
     if (server) await server.close().catch(() => {});
     rmSync(root, { recursive: true, force: true });
   }

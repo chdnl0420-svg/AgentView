@@ -47,9 +47,14 @@ export interface ServerOptions {
 
 export interface StartWorkerRequest extends SpawnRequest {
   backend: BackendKind;
+  agent?: string | null;
   name?: string | null;
   model?: string | null;
   permissionMode?: string | null;
+}
+
+interface StartSessionDeps extends Pick<ServerOptions, 'catalog' | 'roster' | 'workerFactory'> {
+  inFlightStartSessions?: Set<string>;
 }
 
 interface ClientSlot {
@@ -102,6 +107,7 @@ function parseStartSessionRequest(body: Record<string, unknown>): StartWorkerReq
     sessionId,
     cwd,
     backend: backendRaw as BackendKind,
+    agent: asOptionalString(body.agent),
     prompt: asOptionalString(body.prompt) ?? undefined,
     name: asOptionalString(body.name),
     model: asOptionalString(body.model),
@@ -111,18 +117,23 @@ function parseStartSessionRequest(body: Record<string, unknown>): StartWorkerReq
 
 async function startWorkerSession(
   req: StartWorkerRequest,
-  opts: Pick<ServerOptions, 'catalog' | 'roster' | 'workerFactory'>
+  opts: StartSessionDeps
 ): Promise<{ sessionId: string; pid: number }> {
   if (!opts.catalog || !opts.roster || !opts.workerFactory) {
     throw new Error('ADAPTER_UNAVAILABLE');
   }
-  const worker = await opts.workerFactory(req);
-  if (!worker || worker.sessionId !== req.sessionId || !Number.isInteger(worker.pid) || worker.pid <= 0) {
-    throw new Error('START_FAILED');
+  if (opts.roster.forSession(req.sessionId) || opts.inFlightStartSessions?.has(req.sessionId)) {
+    throw new Error('DUPLICATE_SESSION');
   }
+  opts.inFlightStartSessions?.add(req.sessionId);
   const startedAt = Date.now();
   let rosterRegistered = false;
+  let worker: WorkerHandle | null = null;
   try {
+    worker = await opts.workerFactory(req);
+    if (!worker || worker.sessionId !== req.sessionId || !Number.isInteger(worker.pid) || worker.pid <= 0) {
+      throw new Error('START_FAILED');
+    }
     await opts.roster.register({
       sessionId: req.sessionId,
       backend: req.backend,
@@ -143,8 +154,10 @@ async function startWorkerSession(
     if (rosterRegistered) {
       await opts.roster.unregister(req.sessionId).catch(() => {});
     }
-    await worker.stop().catch(() => {});
+    await worker?.stop().catch(() => {});
     throw err;
+  } finally {
+    opts.inFlightStartSessions?.delete(req.sessionId);
   }
   return { sessionId: req.sessionId, pid: worker.pid };
 }
@@ -154,7 +167,7 @@ function handleFrame(
   type: number,
   payload: Buffer,
   subscriptions: Subscriptions,
-  startSession: Pick<ServerOptions, 'catalog' | 'roster' | 'workerFactory'>,
+  startSession: StartSessionDeps,
   onShutdownRequest?: () => void
 ): void {
   if (type === FRAME_TYPE.HELLO) {
@@ -232,7 +245,7 @@ function attachClient(
   socket: Socket,
   clients: Set<Socket>,
   subscriptions: Subscriptions,
-  startSession: Pick<ServerOptions, 'catalog' | 'roster' | 'workerFactory'>,
+  startSession: StartSessionDeps,
   onShutdownRequest?: () => void
 ): void {
   const slot: ClientSlot = { socket, inbox: Buffer.alloc(0) };
@@ -264,6 +277,7 @@ export async function startServer(opts: ServerOptions): Promise<ServerHandle> {
     await acquirePid(opts.pidPath);
   }
   const clients = new Set<Socket>();
+  const inFlightStartSessions = new Set<string>();
   const subscriptions = new Subscriptions((sock, push) => {
     sendCtrlJson(sock, { event: 'conversation-appended', ...push });
   });
@@ -277,6 +291,7 @@ export async function startServer(opts: ServerOptions): Promise<ServerHandle> {
       catalog: opts.catalog,
       roster: opts.roster,
       workerFactory: opts.workerFactory,
+      inFlightStartSessions,
     };
     const server: Server = createServer((sock) =>
       attachClient(sock, clients, subscriptions, startSession, opts.onShutdownRequest)

@@ -35,6 +35,7 @@ export interface StartSessionInput {
   sessionId: string;
   cwd: string;
   backend?: 'claude' | 'external-claude' | 'codex' | null;
+  agent?: string | null;
   prompt?: string | null;
   name?: string | null;
   model?: string | null;
@@ -211,6 +212,7 @@ export class AvdClient extends EventEmitter {
       sessionId: input.sessionId,
       cwd: input.cwd,
       backend: input.backend ?? 'claude',
+      agent: input.agent ?? null,
       prompt: input.prompt ?? null,
       name: input.name ?? null,
       model: input.model ?? null,

@@ -194,6 +194,32 @@ test('AVD_ENABLED=1 maps legacy agent selection to avd backend when backend is u
   }
 });
 
+test('AVD_ENABLED=1 preserves custom agent separately from external-claude backend', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'session-runner-avd-external-agent-'));
+  try {
+    const state = resetState();
+    state.avdStartAck = { ok: true, sessionId: 's-external', pid: 6789 };
+    const { SessionRunner } = await loadSessionRunner(tmp);
+    await withEnv('AVD_ENABLED', '1', async () => {
+      const runner = new SessionRunner();
+      const result = await runner.startNewSession({
+        prompt: 'use planner',
+        cwd: tmp,
+        backend: 'external-claude',
+        agent: 'planner',
+        name: 'External planner',
+      });
+      assert.equal(state.avdStartCalls.length, 1);
+      assert.equal(state.avdStartCalls[0].backend, 'external-claude');
+      assert.equal(state.avdStartCalls[0].agent, 'planner');
+      assert.equal(state.avdStartCalls[0].prompt, 'use planner');
+      assert.deepEqual(result, { sessionId: 's-external', pid: 6789 });
+    });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('AVD_ENABLED unset keeps existing Claude preflight and dispatch path', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'session-runner-legacy-'));
   try {
