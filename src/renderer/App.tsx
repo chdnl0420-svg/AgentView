@@ -618,7 +618,7 @@ export default function App() {
   // Card mode: open session → fullscreen detail
   if (selected && viewMode === 'cards') {
     return (
-      <>
+      <div className="app no-chrome detail-only">
         <WindowChrome />
         <UpdateBanner />
         {claudeStatusBanner}
@@ -646,7 +646,7 @@ export default function App() {
           }}
         />
         {toastNode}
-      </>
+      </div>
     );
   }
 

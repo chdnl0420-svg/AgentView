@@ -165,8 +165,32 @@ select option:disabled {
   height: 100vh;
   overflow: hidden;
 }
+/* Flex column instead of grid: the conditionally-rendered chrome
+   (WindowChrome, UpdateBanner, claudeStatusBanner, SpotlightTour) means
+   the child count varies between 2 and 5, which made the fixed
+   `auto auto auto 1fr` track list misalign — dashboard fell into the
+   first auto track and the 1fr slot stayed empty (~290px void below
+   the input bar). Flex lets the dashboard take all remaining space
+   regardless of which chrome elements are mounted. */
 .app.no-chrome {
-  grid-template-rows: auto auto auto 1fr;
+  display: flex;
+  flex-direction: column;
+  /* WindowChrome is position:fixed (top:0, height:32) so the flow
+     content underneath would render behind it without this offset. */
+  padding-top: 32px;
+  box-sizing: border-box;
+}
+.app.no-chrome > .dashboard {
+  flex: 1 1 0;
+  min-height: 0;
+}
+/* cards-mode + selected session renders SessionDetail as the only
+   workspace child. Override its default `height: 100vh` (designed for a
+   bare fragment mount) so the flex column owns its size. */
+.app.no-chrome.detail-only > .detail-page {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
 }
 
 .topbar {
