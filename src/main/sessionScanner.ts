@@ -8,6 +8,33 @@ const SESSIONS_DIR = join(homedir(), '.claude', 'sessions');
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const DAEMON_ROSTER = join(homedir(), '.claude', 'daemon', 'roster.json');
 const JOBS_DIR = join(homedir(), '.claude', 'jobs');
+// avd daemon's persistent session catalog. We merge any entries that
+// claude's `~/.claude/jobs/` scan didn't already cover (avd-only sessions:
+// codex, external-claude with no jobs/<short>/state.json), so the
+// dashboard shows them alongside legacy bg workers.
+const AVD_CATALOG = join(homedir(), '.agentview', 'daemon', 'state.json');
+
+/**
+ * Subset of `avd/src/catalog.ts:SessionRecord` we rely on for the merge.
+ * Kept local so the renderer build doesn't take a hard runtime dep on
+ * the avd workspace just to read its on-disk file shape.
+ */
+interface AvdCatalogRecord {
+  sessionId?: string;
+  backend?: string;
+  cwd?: string;
+  startedAt?: number;
+  updatedAt?: number;
+  status?: string;
+  pid?: number;
+  name?: string;
+  conversationPath?: string;
+}
+
+interface AvdCatalogFile {
+  version?: number;
+  sessions?: Record<string, AvdCatalogRecord>;
+}
 
 interface ClaudeJobState {
   state: string;        // "done" | "running" | ...
@@ -532,12 +559,75 @@ export async function scanSessions(
     result.sessions.push(session);
   }
 
+  // Merge avd catalog entries that aren't already represented by a
+  // claude job. Codex sessions and external-claude sessions that the
+  // user started while the legacy daemon was down only live in the
+  // avd catalog — without this merge they'd vanish from the dashboard
+  // even though they're still running.
+  await mergeAvdCatalog(result.sessions);
+
   result.sessions.sort((a, b) => {
     if (a.alive !== b.alive) return a.alive ? -1 : 1;
     return b.updatedAt - a.updatedAt;
   });
 
   return result;
+}
+
+/**
+ * Read `~/.agentview/daemon/state.json` (the avd catalog) and append
+ * any sessions whose sessionId isn't already in `out`. Missing file is
+ * the common case (avd never ran) — we swallow it. Malformed JSON is
+ * also non-fatal so a half-written catalog never breaks the scan.
+ */
+async function mergeAvdCatalog(out: BgSession[]): Promise<void> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(AVD_CATALOG, 'utf8');
+  } catch {
+    return; // catalog missing — normal if avd never ran
+  }
+  let data: AvdCatalogFile;
+  try {
+    data = JSON.parse(raw) as AvdCatalogFile;
+  } catch {
+    return; // half-written or corrupted — skip rather than throw
+  }
+  const sessions = data.sessions;
+  if (!sessions || typeof sessions !== 'object') return;
+  const seen = new Set(out.map((s) => s.sessionId));
+  for (const record of Object.values(sessions)) {
+    if (!record || typeof record !== 'object') continue;
+    const sessionId = typeof record.sessionId === 'string' ? record.sessionId : '';
+    if (!sessionId || seen.has(sessionId)) continue;
+    const pid = typeof record.pid === 'number' && record.pid > 0 ? record.pid : 0;
+    const alive = pid > 0 && isPidAlive(pid);
+    const startedAt = typeof record.startedAt === 'number' ? record.startedAt : Date.now();
+    const updatedAt = typeof record.updatedAt === 'number' ? record.updatedAt : startedAt;
+    const conversationPath = typeof record.conversationPath === 'string'
+      ? record.conversationPath
+      : null;
+    const session: BgSession = {
+      pid,
+      sessionId,
+      cwd: typeof record.cwd === 'string' ? record.cwd : '',
+      startedAt,
+      updatedAt,
+      version: undefined,
+      kind: 'bg',
+      entrypoint: 'avd',
+      name: typeof record.name === 'string' && record.name ? record.name : sessionId.slice(0, 8),
+      agent: typeof record.backend === 'string' && record.backend ? record.backend : 'claude',
+      jobId: sessionId.slice(0, 8),
+      status: classifyStatus(record.status, alive),
+      alive,
+      metaPath: AVD_CATALOG,
+      conversationPath,
+      conversationSize: 0
+    };
+    out.push(session);
+    seen.add(sessionId);
+  }
 }
 
 export function sessionsDir(): string {

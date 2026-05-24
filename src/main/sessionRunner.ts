@@ -12,6 +12,7 @@ import { rememberOwned } from './ownedSessions';
 import { checkClaudeStatus, ensureDaemonRunning } from './claudePreflight';
 import { appendSessionEvent, updateSessionStatus, writeSessionDoc } from './workspaceStore';
 import { createAvdClient } from './avdClient';
+import { ensureAvdReady } from './avdDaemonLifecycle';
 
 const WORKER_SETTLE_MS = 2500;
 const ATTACH_RETRY_MS = 600;
@@ -45,9 +46,13 @@ const JOBS_DIR = join(homedir(), '.claude', 'jobs');
 const DISPATCH_POLL_MS = 200;
 
 type CreateAvdClient = typeof createAvdClient;
+type EnsureAvdReady = typeof ensureAvdReady;
 
 interface SessionRunnerOptions {
   createAvdClient?: CreateAvdClient;
+  /** Override for tests. Production uses the singleton `ensureAvdReady`
+   *  exported by `./avdDaemonLifecycle`. */
+  ensureAvdReady?: EnsureAvdReady;
 }
 
 /**
@@ -314,10 +319,12 @@ export class SessionRunner extends EventEmitter {
   private slots = new Map<string, PtySlot>();
   private avdSessions = new Map<string, AvdSessionInfo>();
   private readonly createAvdClient: CreateAvdClient;
+  private readonly ensureAvdReady: EnsureAvdReady;
 
   constructor(options: SessionRunnerOptions = {}) {
     super();
     this.createAvdClient = options.createAvdClient ?? createAvdClient;
+    this.ensureAvdReady = options.ensureAvdReady ?? ensureAvdReady;
   }
 
   pidsBySession(): Map<string, number> {
@@ -511,6 +518,23 @@ export class SessionRunner extends EventEmitter {
     input: NewSessionInput,
     cwd: string
   ): Promise<{ sessionId: string; pid: number | null; forkedFrom?: null }> {
+    // Lazy-spawn the avd daemon before any CTRL frame. If the spawn
+    // (or the wait-for-ready poll) fails, surface a clean error event
+    // to the renderer instead of letting `createAvdClient` raise a raw
+    // ECONNREFUSED. Idempotent — a no-op when the daemon is already up.
+    try {
+      await this.ensureAvdReady();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emit('event', {
+        sessionId,
+        type: 'error',
+        message: `avd 데몬 자동 시작 실패: ${message}`,
+        ts: Date.now()
+      } satisfies ClaudeRunEvent);
+      appendSessionEvent(sessionId, 'error', `avd-daemon-start-failed: ${message}`).catch(() => undefined);
+      return { sessionId, pid: null };
+    }
     let client: Awaited<ReturnType<CreateAvdClient>> | null = null;
     try {
       client = await this.createAvdClient();

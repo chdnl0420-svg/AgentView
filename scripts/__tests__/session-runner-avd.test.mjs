@@ -18,6 +18,7 @@ function makeStubPlugin() {
       buildApi.onResolve({ filter: /^\.\/git$/ }, () => stub('git'));
       buildApi.onResolve({ filter: /^\.\/ownedSessions$/ }, () => stub('ownedSessions'));
       buildApi.onResolve({ filter: /^\.\/avdClient$/ }, () => stub('avdClient'));
+      buildApi.onResolve({ filter: /^\.\/avdDaemonLifecycle$/ }, () => stub('avdDaemonLifecycle'));
       buildApi.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => {
         const key = 'globalThis.__sessionRunnerAvdTest';
         const modules = {
@@ -90,6 +91,13 @@ function makeStubPlugin() {
               };
             }
           `,
+          avdDaemonLifecycle: `
+            export async function ensureAvdReady() {
+              ${key}.ensureAvdReadyCalls++;
+              if (${key}.ensureAvdReadyError) throw ${key}.ensureAvdReadyError;
+            }
+            export function shutdownAvdHost() { return Promise.resolve(); }
+          `,
         };
         return { contents: modules[args.path], loader: 'js' };
       });
@@ -122,6 +130,8 @@ function resetState() {
     avdCloseCalls: 0,
     checkStatusCalls: 0,
     createAvdClientCalls: 0,
+    ensureAvdReadyCalls: 0,
+    ensureAvdReadyError: null,
     ensureDaemonCalls: 0,
     owned: [],
     ptyPid: 4321,

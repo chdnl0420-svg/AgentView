@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { registerIpc, shutdownIpc } from './ipc';
 import { refreshDesktopShortcut } from './desktopShortcut';
+import { shutdownAvdHost } from './avdDaemonLifecycle';
 
 // Renderer asks for autostart via IPC. We mirror it into a tiny JSON file
 // so the choice survives reinstall + the main process knows the desired
@@ -278,4 +279,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   shutdownIpc();
+  // Fire-and-forget — Electron may not wait for async cleanup on
+  // `before-quit`, and the daemon's own process-exit hook closes its
+  // socket regardless. Swallow rejections so a stuck stop() never
+  // throws into the quit lane.
+  void shutdownAvdHost().catch(() => undefined);
 });
