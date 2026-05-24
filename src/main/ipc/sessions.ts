@@ -128,6 +128,15 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
         return { sessionId: input.sessionId, pid: info?.pid ?? null };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        // If avd daemon no longer knows this session (e.g., daemon restart
+        // wiped its in-memory handle map), release tracking so a retry
+        // falls through to legacy paths instead of looping on
+        // UNKNOWN_SESSION forever. Match both the avd server's
+        // `UNKNOWN_SESSION` and sessionRunner's `UNKNOWN_AVD_SESSION`
+        // defensively in case ordering changes later.
+        if (/UNKNOWN_SESSION|UNKNOWN_AVD_SESSION/.test(message)) {
+          runner.forgetAvdSession(input.sessionId);
+        }
         throw new Error(`AVD_SEND_FAILED: ${message}`);
       }
     }
@@ -198,9 +207,12 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.startsWith('CANCEL_NOT_IMPLEMENTED')) {
-          // chunk-10 hasn't shipped yet — fall through to legacy cancel
-          // path (which may still work if the session's underlying claude
-          // worker is discoverable via ~/.claude/daemon).
+          // chunk-10 hasn't shipped yet — release tracking so subsequent
+          // operations on this sid fall through to legacy paths (UX:
+          // cancel button no-ops via legacy, but we don't grow the
+          // avdSessions Map forever or get stuck in an avd-only loop).
+          // Re-evaluate when chunk-10 lands.
+          runner.forgetAvdSession(sessionId);
           console.warn('[ipc] avd cancel not yet implemented, falling back', sessionId);
         } else {
           throw new Error(`AVD_CANCEL_FAILED: ${message}`);

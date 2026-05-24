@@ -359,11 +359,69 @@ test('SessionsCancel: CANCEL_NOT_IMPLEMENTED falls through to legacy path instea
     // the legacy path returns false.
     const result = await handler({}, 's-avd');
     assert.equal(calls.cancelAvdSession.length, 1);
-    // forget must NOT be called when cancel didn't succeed.
-    assert.equal(calls.forgetAvdSession.length, 0);
     // Legacy path was reached.
     assert.equal(calls.hasSession.length, 1);
     assert.equal(result, false);
+  } finally {
+    cleanup(tmp);
+  }
+});
+
+test('SessionsCancel: CANCEL_NOT_IMPLEMENTED branch releases avd tracking (memory leak fix)', async () => {
+  // chunk-12 follow-up: cancelAvdSession always throws CANCEL_NOT_IMPLEMENTED
+  // until chunk-10 ships, so without this fix avdSessions Map grows
+  // unbounded. We release tracking so subsequent ops on this sid fall
+  // through to legacy paths.
+  const { tmp, state, calls, handlers } = await setup({
+    knowsAvdSession: (sid) => sid === 's-cancel-release',
+    cancelAvdSession: async () => {
+      throw new Error('CANCEL_NOT_IMPLEMENTED: chunk-10 will add cancel-session CTRL');
+    },
+    hasSession: () => false,
+  });
+  state.externalAlive = false;
+  try {
+    const handler = handlers.get('sessions:cancel');
+    const result = await handler({}, 's-cancel-release');
+    assert.equal(result, false, 'falls through to legacy, returns false');
+    assert.equal(
+      calls.forgetAvdSession.length,
+      1,
+      'forgetAvdSession called even though cancel was not implemented',
+    );
+    assert.equal(calls.forgetAvdSession[0], 's-cancel-release');
+  } finally {
+    cleanup(tmp);
+  }
+});
+
+test('SessionsResume: releases avd tracking on UNKNOWN_SESSION error (daemon-restart fix)', async () => {
+  // chunk-12 follow-up: if avd daemon restarts, the in-memory avdSessions
+  // Map still has the sid but the daemon's roster doesn't. Without this
+  // fix, every retry returns UNKNOWN_SESSION indefinitely. We release
+  // tracking so the next retry falls through to legacy paths.
+  const { tmp, calls, handlers } = await setup({
+    knowsAvdSession: (sid) => sid === 's-resume-unknown',
+    sendAvdMessage: async () => {
+      throw new Error('UNKNOWN_SESSION');
+    },
+  });
+  try {
+    const handler = handlers.get('sessions:resume');
+    await assert.rejects(
+      handler({}, {
+        sessionId: 's-resume-unknown',
+        prompt: 'hi',
+        permissionMode: null,
+      }),
+      /AVD_SEND_FAILED: UNKNOWN_SESSION/,
+    );
+    assert.equal(
+      calls.forgetAvdSession.length,
+      1,
+      'forgetAvdSession called so retry falls through to legacy',
+    );
+    assert.equal(calls.forgetAvdSession[0], 's-resume-unknown');
   } finally {
     cleanup(tmp);
   }
