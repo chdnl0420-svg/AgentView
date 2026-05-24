@@ -12,7 +12,14 @@ import { join } from 'node:path';
 import { AvdClient } from 'avd';
 
 export { AvdClient };
-export type { StartSessionAck, StartSessionInput, SubscribeAck, SubscribeOptions } from 'avd';
+export type {
+  StartSessionAck,
+  StartSessionInput,
+  SubscribeAck,
+  SubscribeOptions,
+  SendMessageInput,
+  SendMessageAck,
+} from 'avd';
 
 /** Resolve the daemon socket path the same way `avd/dist/daemon.js` does
  *  when AVD_SOCKET_PATH is unset. Keeping the two derivations in sync

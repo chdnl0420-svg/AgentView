@@ -81,6 +81,11 @@ function makeStubPlugin() {
                   if (${key}.avdStartError) throw ${key}.avdStartError;
                   return ${key}.avdStartAck;
                 },
+                sendMessage: async (input) => {
+                  ${key}.avdSendCalls.push(input);
+                  if (${key}.avdSendError) throw ${key}.avdSendError;
+                  return { ok: true, sessionId: input.sessionId, deliveredAt: Date.now() };
+                },
                 close: async () => { ${key}.avdCloseCalls++; },
               };
             }
@@ -112,6 +117,8 @@ function resetState() {
     avdStartAck: { ok: true, sessionId: 'unused', pid: 9999 },
     avdStartError: null,
     avdStartCalls: [],
+    avdSendCalls: [],
+    avdSendError: null,
     avdCloseCalls: 0,
     checkStatusCalls: 0,
     createAvdClientCalls: 0,
@@ -141,86 +148,32 @@ async function withEnv(key, value, fn) {
   }
 }
 
-test('AVD_ENABLED=1 uses avd startSession and does not fall back to direct PTY on failure', async () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'session-runner-avd-'));
-  try {
-    const state = resetState();
-    state.avdStartError = new Error('ADAPTER_UNAVAILABLE');
-    const { SessionRunner } = await loadSessionRunner(tmp);
-    await withEnv('AVD_ENABLED', '1', async () => {
-      const runner = new SessionRunner();
-      const events = [];
-      runner.on('event', (evt) => events.push(evt));
-      const result = await runner.startNewSession({
-        prompt: 'hello',
-        cwd: tmp,
-        backend: 'claude',
-        name: 'A',
-      });
-      assert.equal(state.createAvdClientCalls, 1);
-      assert.equal(state.avdStartCalls.length, 1);
-      assert.equal(state.avdStartCalls[0].cwd, tmp);
-      assert.equal(state.avdStartCalls[0].backend, 'claude');
-      assert.equal(state.ptySpawns, 0, 'direct PTY fallback must not run after avd failure');
-      assert.equal(result.pid, null);
-      assert.ok(events.some((evt) => evt.type === 'error' && /ADAPTER_UNAVAILABLE/.test(evt.message)));
-    });
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-});
-
-test('AVD_ENABLED=1 maps legacy agent selection to avd backend when backend is unset', async () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'session-runner-avd-agent-'));
-  try {
-    const state = resetState();
-    state.avdStartAck = { ok: true, sessionId: 's-agent', pid: 8765 };
-    const { SessionRunner } = await loadSessionRunner(tmp);
-    await withEnv('AVD_ENABLED', '1', async () => {
-      const runner = new SessionRunner();
-      const result = await runner.startNewSession({
-        prompt: 'hello',
-        cwd: tmp,
-        agent: 'codex',
-        name: 'Codex session',
-      });
-      assert.equal(state.avdStartCalls.length, 1);
-      assert.equal(state.avdStartCalls[0].backend, 'codex');
-      assert.equal(state.ptySpawns, 0);
-      assert.deepEqual(result, { sessionId: 's-agent', pid: 8765 });
-    });
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
-});
-
-test('AVD_ENABLED=1 preserves custom agent separately from external-claude backend', async () => {
+test('backend=external-claude preserves custom agent in avd start request', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'session-runner-avd-external-agent-'));
   try {
     const state = resetState();
     state.avdStartAck = { ok: true, sessionId: 's-external', pid: 6789 };
     const { SessionRunner } = await loadSessionRunner(tmp);
-    await withEnv('AVD_ENABLED', '1', async () => {
-      const runner = new SessionRunner();
-      const result = await runner.startNewSession({
-        prompt: 'use planner',
-        cwd: tmp,
-        backend: 'external-claude',
-        agent: 'planner',
-        name: 'External planner',
-      });
-      assert.equal(state.avdStartCalls.length, 1);
-      assert.equal(state.avdStartCalls[0].backend, 'external-claude');
-      assert.equal(state.avdStartCalls[0].agent, 'planner');
-      assert.equal(state.avdStartCalls[0].prompt, 'use planner');
-      assert.deepEqual(result, { sessionId: 's-external', pid: 6789 });
+    const runner = new SessionRunner();
+    const result = await runner.startNewSession({
+      prompt: 'use planner',
+      cwd: tmp,
+      backend: 'external-claude',
+      agent: 'planner',
+      name: 'External planner',
     });
+    assert.equal(state.avdStartCalls.length, 1);
+    assert.equal(state.avdStartCalls[0].backend, 'external-claude');
+    assert.equal(state.avdStartCalls[0].agent, 'planner');
+    assert.equal(state.avdStartCalls[0].prompt, 'use planner');
+    assert.equal(state.ptySpawns, 0);
+    assert.deepEqual(result, { sessionId: 's-external', pid: 6789 });
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test('AVD_ENABLED unset keeps existing Claude preflight and dispatch path', async () => {
+test('backend=claude uses legacy Claude preflight and dispatch path', async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'session-runner-legacy-'));
   try {
     const state = resetState();
@@ -228,20 +181,84 @@ test('AVD_ENABLED unset keeps existing Claude preflight and dispatch path', asyn
     writeFileSync(join(tmp, 'noop.txt'), 'noop');
     await withEnv('USERPROFILE', tmp, async () => {
       const { SessionRunner } = await loadSessionRunner(tmp);
-      await withEnv('AVD_ENABLED', undefined, async () => {
-        const runner = new SessionRunner();
-        const result = await runner.startNewSession({
-          prompt: 'hello',
-          cwd: tmp,
-          backend: 'claude',
-        });
-        assert.equal(state.createAvdClientCalls, 0);
-        assert.equal(state.checkStatusCalls, 1);
-        assert.equal(state.ensureDaemonCalls, 1);
-        assert.equal(state.ptySpawns, 1);
-        assert.equal(result.pid, 4321);
+      const runner = new SessionRunner();
+      const result = await runner.startNewSession({
+        prompt: 'hello',
+        cwd: tmp,
+        backend: 'claude',
       });
+      assert.equal(state.createAvdClientCalls, 0, 'avd must not be touched for backend=claude');
+      assert.equal(state.checkStatusCalls, 1);
+      assert.equal(state.ensureDaemonCalls, 1);
+      assert.equal(state.ptySpawns, 1);
+      assert.equal(result.pid, 4321);
     });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('backend=avd routes to avd with default external-claude worker', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'session-runner-avd-dropdown-'));
+  try {
+    const state = resetState();
+    state.avdStartAck = { ok: true, sessionId: 's-avd', pid: 7777 };
+    const { SessionRunner } = await loadSessionRunner(tmp);
+    const runner = new SessionRunner();
+    const result = await runner.startNewSession({
+      prompt: 'hi',
+      cwd: tmp,
+      backend: 'avd',
+      name: 'A',
+    });
+    assert.equal(state.createAvdClientCalls, 1);
+    assert.equal(state.avdStartCalls.length, 1);
+    assert.equal(state.avdStartCalls[0].backend, 'external-claude');
+    assert.equal(state.ptySpawns, 0);
+    assert.deepEqual(result, { sessionId: 's-avd', pid: 7777 });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('backend=codex routes to avd with codex worker', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'session-runner-avd-codex-'));
+  try {
+    const state = resetState();
+    state.avdStartAck = { ok: true, sessionId: 's-codex', pid: 8888 };
+    const { SessionRunner } = await loadSessionRunner(tmp);
+    const runner = new SessionRunner();
+    const result = await runner.startNewSession({
+      prompt: 'gen',
+      cwd: tmp,
+      backend: 'codex',
+    });
+    assert.equal(state.avdStartCalls.length, 1);
+    assert.equal(state.avdStartCalls[0].backend, 'codex');
+    assert.equal(state.ptySpawns, 0);
+    assert.deepEqual(result, { sessionId: 's-codex', pid: 8888 });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('sendAvdMessage calls AvdClient.sendMessage and serializes through avdClient lifecycle', async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'session-runner-avd-send-'));
+  try {
+    const state = resetState();
+    state.avdStartAck = { ok: true, sessionId: 's-send', pid: 9000 };
+    const { SessionRunner } = await loadSessionRunner(tmp);
+    const runner = new SessionRunner();
+    await runner.startNewSession({ prompt: 'first', cwd: tmp, backend: 'avd' });
+    assert.equal(runner.knowsAvdSession('s-send'), true);
+    await runner.sendAvdMessage('s-send', 'follow-up', 'bypassPermissions');
+    assert.equal(state.avdSendCalls.length, 1);
+    assert.equal(state.avdSendCalls[0].sessionId, 's-send');
+    assert.equal(state.avdSendCalls[0].prompt, 'follow-up');
+    assert.equal(state.avdSendCalls[0].permissionMode, 'bypassPermissions');
+    // close() must be called even on success (resource cleanup) — one for
+    // startSession and one for sendAvdMessage.
+    assert.ok(state.avdCloseCalls >= 2);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

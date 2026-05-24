@@ -50,9 +50,42 @@ interface SessionRunnerOptions {
   createAvdClient?: CreateAvdClient;
 }
 
-function isAvdEnabled(): boolean {
-  const value = (process.env.AVD_ENABLED ?? '').trim().toLowerCase();
-  return value === '1' || value === 'true' || value === 'yes';
+/**
+ * Routing decision for a new session request. chunk-11 removed the
+ * legacy `AVD_ENABLED` env var: backend selection now flows from the
+ * `input.backend` dropdown value alone. `'avd'` is a convenience alias
+ * for the default `'external-claude'` worker.
+ */
+type BackendRoute =
+  | { via: 'avd'; worker: BackendKind }
+  | { via: 'legacy'; worker: null };
+
+function routeBackend(input: NewSessionInput): BackendRoute {
+  switch (input.backend) {
+    case 'avd':
+      return { via: 'avd', worker: 'external-claude' };
+    case 'external-claude':
+      return { via: 'avd', worker: 'external-claude' };
+    case 'codex':
+      return { via: 'avd', worker: 'codex' };
+    case 'claude':
+      return { via: 'legacy', worker: null };
+    default:
+      return { via: 'legacy', worker: null };
+  }
+}
+
+/**
+ * Tracks sessions that were started through the avd adapter so the IPC
+ * layer (chunk-12) can route follow-up messages to the same worker
+ * instead of the legacy daemon dispatch path.
+ */
+interface AvdSessionInfo {
+  sessionId: string;
+  backend: BackendKind;
+  pid: number;
+  cwd: string;
+  startedAt: number;
 }
 
 function normalizeAgentBackend(agent: string | null | undefined): BackendKind | null {
@@ -279,6 +312,7 @@ function resolveClaudeExe(): string {
  */
 export class SessionRunner extends EventEmitter {
   private slots = new Map<string, PtySlot>();
+  private avdSessions = new Map<string, AvdSessionInfo>();
   private readonly createAvdClient: CreateAvdClient;
 
   constructor(options: SessionRunnerOptions = {}) {
@@ -354,8 +388,13 @@ export class SessionRunner extends EventEmitter {
       /* best-effort */
     });
 
-    if (isAvdEnabled()) {
-      return this.startViaAvd(sessionId, input, spawnCwd);
+    const route = routeBackend(input);
+    if (route.via === 'avd') {
+      return this.startViaAvd(
+        sessionId,
+        { ...input, backend: route.worker },
+        spawnCwd,
+      );
     }
 
     // Preflight — is claude CLI even installed? Is the bg supervisor up?
@@ -475,15 +514,26 @@ export class SessionRunner extends EventEmitter {
     let client: Awaited<ReturnType<CreateAvdClient>> | null = null;
     try {
       client = await this.createAvdClient();
+      // `input.backend` is the normalized worker backend at this point —
+      // `routeBackend` has already mapped 'avd' → 'external-claude' upstream.
+      const workerBackend =
+        normalizeInputBackend(input.backend) ?? normalizeAgentBackend(input.agent) ?? 'claude';
       const ack = await client.startSession({
         sessionId,
         cwd,
-        backend: normalizeInputBackend(input.backend) ?? normalizeAgentBackend(input.agent) ?? 'claude',
+        backend: workerBackend,
         agent: input.agent ?? null,
         prompt: input.prompt,
         name: input.name ?? null,
         model: input.model ?? null,
         permissionMode: input.permissionMode ?? null,
+      });
+      this.avdSessions.set(ack.sessionId, {
+        sessionId: ack.sessionId,
+        backend: workerBackend,
+        pid: ack.pid,
+        cwd,
+        startedAt: Date.now(),
       });
       this.emit('event', {
         sessionId: ack.sessionId,
@@ -564,6 +614,58 @@ export class SessionRunner extends EventEmitter {
 
   hasSession(sessionId: string): boolean {
     return this.slots.has(sessionId);
+  }
+
+  /** True when this sessionId was started through the avd adapter and is
+   *  still tracked in-memory. chunk-12's IPC layer uses this to pick the
+   *  right follow-up routing path. */
+  knowsAvdSession(sessionId: string): boolean {
+    return this.avdSessions.has(sessionId);
+  }
+
+  getAvdSession(sessionId: string): AvdSessionInfo | null {
+    return this.avdSessions.get(sessionId) ?? null;
+  }
+
+  forgetAvdSession(sessionId: string): void {
+    this.avdSessions.delete(sessionId);
+  }
+
+  /**
+   * Send a follow-up prompt to an avd-started session. Opens a short-lived
+   * AvdClient connection, dispatches `send-message`, and closes it again
+   * — the daemon owns the worker handle, we just relay the prompt.
+   */
+  async sendAvdMessage(
+    sessionId: string,
+    prompt: string,
+    permissionMode: string | null,
+  ): Promise<void> {
+    if (!this.avdSessions.has(sessionId)) {
+      throw new Error('UNKNOWN_AVD_SESSION');
+    }
+    const client = await this.createAvdClient();
+    try {
+      await client.sendMessage({ sessionId, prompt, permissionMode });
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }
+
+  /**
+   * Cancel an avd-started session.
+   *
+   * NOTE: chunk-10 will wire up the actual `cancel-session` CTRL frame on
+   * the avd server. Until then this method intentionally throws so callers
+   * (chunk-12's IPC handler) can fall through to the legacy cancel path or
+   * surface a clear UX message instead of silently no-op'ing.
+   */
+  async cancelAvdSession(sessionId: string): Promise<boolean> {
+    if (!this.avdSessions.has(sessionId)) return false;
+    // Intentionally not opening a client yet — chunk-10 lands the
+    // cancel-session CTRL on the avd server. Throwing keeps the contract
+    // explicit so the IPC layer can branch.
+    throw new Error('CANCEL_NOT_IMPLEMENTED: chunk-10 will add cancel-session CTRL');
   }
 
   cancel(sessionId: string): boolean {
