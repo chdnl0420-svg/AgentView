@@ -69,9 +69,11 @@ export class AvdDaemonHost {
   }
 
   async stop(): Promise<void> {
-    if (!this.child) return;
     const child = this.child;
-    this.child = null;
+    if (!child) return;
+    // Only clear the field if it still refers to this child — a concurrent
+    // start() racing with stop() may have already replaced it.
+    if (this.child === child) this.child = null;
     try {
       child.kill();
     } catch {
@@ -88,21 +90,24 @@ export class AvdDaemonHost {
 
   private async doStart(): Promise<void> {
     const spawnFn = this.opts.spawnFn ?? spawn;
-    this.child = spawnFn(process.execPath, [this.opts.daemonScript], {
+    const myChild = spawnFn(process.execPath, [this.opts.daemonScript], {
       detached: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
     });
-    this.child.stderr?.on('data', (b: Buffer) => {
+    this.child = myChild;
+    myChild.stderr?.on('data', (b: Buffer) => {
       console.error('[avd-daemon]', b.toString().trimEnd());
     });
-    this.child.stdout?.on('data', (b: Buffer) => {
+    myChild.stdout?.on('data', (b: Buffer) => {
       console.log('[avd-daemon]', b.toString().trimEnd());
     });
-    this.child.once('exit', (code) => {
+    myChild.once('exit', (code) => {
       console.log('[avd-daemon] exited with code', code);
-      this.child = null;
+      // Only clear the field if it still refers to this child — a concurrent
+      // start() may have replaced it with a fresh instance.
+      if (this.child === myChild) this.child = null;
     });
     await this.waitSocketReady();
   }

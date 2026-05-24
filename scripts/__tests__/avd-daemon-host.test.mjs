@@ -170,3 +170,92 @@ test('stop() is safe on a never-started host', async () => {
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("late exit of stopped child A must not clobber a fresh child B", async () => {
+  // Race scenario: stop(A) is in-flight (waiting on exit). Before A actually
+  // emits exit, a concurrent start() races in and spawns child B. When A
+  // finally exits, its exit listener must NOT clear this.child (which now
+  // holds B). Without the guard, B's reference is clobbered and isRunning()
+  // lies while a real daemon keeps running — resource leak.
+  const tmp = mkdtempSync(join(tmpdir(), 'avd-daemon-host-race-'));
+  try {
+    const { AvdDaemonHost } = await loadAvdDaemonHost(tmp);
+    const socketPath = makeSocketPath('race');
+    const server = createServer((s) => s.end());
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(socketPath, () => resolve());
+    });
+
+    const spawned = [];
+    // Manual stub: .kill() does NOT auto-emit exit. We control timing so
+    // we can interleave A.kill → start(B) → A.exit and observe the guard.
+    function makeManualStubChild() {
+      const child = new EventEmitter();
+      child.exitCode = null;
+      child.killed = false;
+      child.stderr = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.kill = () => {
+        child.killed = true;
+      };
+      spawned.push(child);
+      return child;
+    }
+
+    const host = new AvdDaemonHost({
+      daemonScript: 'irrelevant.js',
+      socketPath,
+      readyTimeoutMs: 2000,
+      readyPollIntervalMs: 50,
+      spawnFn: () => makeManualStubChild(),
+    });
+
+    try {
+      // Spawn child A.
+      await host.start();
+      assert.equal(spawned.length, 1, 'first start spawns one child');
+      const childA = host['child'];
+      assert.ok(childA, 'child A reference is set after first start');
+
+      // stop(A) — kicks off kill, then awaits exit. We do NOT await it yet:
+      // hold the promise, simulate the race, then resolve A's exit after B
+      // has been spawned.
+      const stopPromise = host.stop();
+      assert.equal(host['child'], null, 'stop() clears child field eagerly');
+
+      // Concurrent start() — spawns child B while A's exit is still pending.
+      await host.start();
+      assert.equal(spawned.length, 2, 'second start spawns a fresh child');
+      const childB = host['child'];
+      assert.ok(childB && childB !== childA, 'child B is set and distinct from A');
+
+      // Now A finally emits its exit (late). The exit listener must check
+      // `this.child === myChild` and skip the clobber because the field
+      // now points at B.
+      childA.exitCode = 0;
+      childA.emit('exit', 0);
+
+      // stopPromise resolves once A's exit lands (its 'exit' listener inside
+      // stop() also fires).
+      await stopPromise;
+
+      assert.equal(host['child'], childB, "A's late exit must not clear B's reference");
+      assert.equal(host.isRunning(), true, 'host still reports running after late A exit');
+    } finally {
+      // Cleanup B properly.
+      const childB = host['child'];
+      if (childB) {
+        // Trigger B's exit so host.stop() resolves promptly.
+        setImmediate(() => {
+          childB.exitCode = 0;
+          childB.emit('exit', 0);
+        });
+      }
+      await host.stop();
+      await new Promise((resolve) => server.close(() => resolve()));
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
