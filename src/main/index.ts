@@ -109,8 +109,12 @@ function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1080,
-    minHeight: 700,
+    // Min size sized for the smallest layout the renderer still reflows
+    // into: cards grid keeps at least one 290px column, the composer
+    // chip strip wraps to 2-3 lines, and the WindowChrome (32px) +
+    // section-head (50px) still leave room for the input bar.
+    minWidth: 720,
+    minHeight: 480,
     show: false,
     backgroundColor: '#0b0d12',
     title: 'AgentView · Claude Code Background Agents',
