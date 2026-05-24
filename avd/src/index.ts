@@ -4,7 +4,14 @@
 // so chunk-5d / chunk-6 don't accidentally rely on internals.
 
 export { AvdClient } from './client.js';
-export type { StartSessionAck, StartSessionInput, SubscribeAck, SubscribeOptions } from './client.js';
+export type {
+  SendMessageAck,
+  SendMessageInput,
+  StartSessionAck,
+  StartSessionInput,
+  SubscribeAck,
+  SubscribeOptions,
+} from './client.js';
 export { scanCodexState } from './codex-scan.js';
 export type {
   CodexConversationRecord,

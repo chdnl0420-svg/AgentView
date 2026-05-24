@@ -4,7 +4,7 @@ import { connect, type Socket } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { WorkerAdapter, WorkerAdapterRequest } from './adapter.js';
-import type { WorkerHandle } from './index.js';
+import type { WorkerHandle, WorkerSendOptions } from './index.js';
 
 const DEFAULT_DAEMON_DIR = join(homedir(), '.claude', 'daemon');
 const DEFAULT_POLL_MS = 200;
@@ -93,6 +93,15 @@ export class ExternalClaudeAdapter implements WorkerAdapter {
         } catch {
           /* best effort */
         }
+      },
+      // Reuse the same retry-aware delivery path used for the initial
+      // prompt; chunk-6 already established this is the safe contract
+      // for talking to the external claude pty socket.
+      send: async (followUpPrompt: string, _opts?: WorkerSendOptions) => {
+        if (!isProcessAlive(worker.pid)) {
+          throw new Error('WORKER_DEAD');
+        }
+        await this.deliverPromptWithRetry(worker, followUpPrompt);
       },
     };
   }

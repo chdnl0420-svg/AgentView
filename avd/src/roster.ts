@@ -9,6 +9,7 @@
 import { readJson, withFileLock } from './atomic.js';
 import type { BackendKind } from './catalog.js';
 import { _writeFileUnlocked as writeFileUnlocked } from './catalog.js';
+import type { WorkerHandle } from './workers/index.js';
 
 const BACKENDS: ReadonlySet<BackendKind> = new Set([
   'claude', 'external-claude', 'codex',
@@ -55,6 +56,15 @@ function cloneEntry(e: WorkerEntry): WorkerEntry {
 }
 
 export class Roster {
+  /**
+   * In-memory only — handles point at live worker objects in this process
+   * and MUST NOT be serialized to disk. Entries that survive a daemon
+   * restart (via adoption) will have no handle here, so `getHandle` will
+   * return undefined for them; `server.ts` is expected to surface a clear
+   * error in that case.
+   */
+  private readonly handles = new Map<string, WorkerHandle>();
+
   private constructor(private readonly path: string, private state: RosterFile) {}
 
   static async open(path: string): Promise<Roster> {
@@ -63,7 +73,9 @@ export class Roster {
     return new Roster(path, state);
   }
 
-  async register(entry: Omit<WorkerEntry, 'startedAt'> & { startedAt?: number }): Promise<void> {
+  async register(
+    entry: Omit<WorkerEntry, 'startedAt'> & { startedAt?: number; handle?: WorkerHandle }
+  ): Promise<void> {
     if (!entry || typeof entry !== 'object') {
       throw new Error('roster: entry must be an object');
     }
@@ -106,6 +118,9 @@ export class Roster {
       };
       await writeFileUnlocked(this.path, next);
       this.state = next;
+      if (entry.handle) {
+        this.handles.set(entry.sessionId, entry.handle);
+      }
     });
   }
 
@@ -116,12 +131,14 @@ export class Roster {
       if (!liveState.workers[sessionId]) {
         // Already gone — keep in-memory aligned and return.
         this.state = liveState;
+        this.handles.delete(sessionId);
         return;
       }
       const { [sessionId]: _gone, ...rest } = liveState.workers;
       const next: RosterFile = { version: 1, workers: rest };
       await writeFileUnlocked(this.path, next);
       this.state = next;
+      this.handles.delete(sessionId);
     });
   }
 
@@ -129,6 +146,16 @@ export class Roster {
   forSession(sessionId: string): WorkerEntry | null {
     const cur = this.state.workers[sessionId];
     return cur ? cloneEntry(cur) : null;
+  }
+
+  /**
+   * Returns the in-memory WorkerHandle for a session, or undefined when
+   * either (a) the sessionId is unknown or (b) the entry was adopted from
+   * disk after a daemon restart and therefore has no live handle in this
+   * process. Callers must treat `undefined` as a recoverable error.
+   */
+  getHandle(sessionId: string): WorkerHandle | undefined {
+    return this.handles.get(sessionId);
   }
 
   list(): WorkerEntry[] {

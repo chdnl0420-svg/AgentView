@@ -2,6 +2,10 @@
 // future CodexAdapter. Concrete adapters must return a pid-backed handle that
 // server.ts can persist in catalog/roster.
 
+export interface WorkerSendOptions {
+  permissionMode?: string | null;
+}
+
 export interface WorkerHandle {
   sessionId: string;
   pid: number;
@@ -11,6 +15,13 @@ export interface WorkerHandle {
   isAlive(): boolean;
   /** Graceful shutdown. Returns when the process has exited or timed out. */
   stop(): Promise<void>;
+  /**
+   * Send a follow-up prompt to the running worker. Adapters that do not
+   * support follow-up delivery should throw an Error whose message starts
+   * with `NOT_SUPPORTED:`. Adapters whose underlying process has died
+   * should throw `Error('WORKER_DEAD')`.
+   */
+  send(prompt: string, opts?: WorkerSendOptions): Promise<void>;
 }
 
 export interface SpawnRequest {
