@@ -101,6 +101,36 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
 
   ipcMain.handle(IPC.SessionsNew, async (_e, input: NewSessionInput) => runner.startNewSession(input));
   ipcMain.handle(IPC.SessionsResume, async (_e, input: ResumeMessageInput) => {
+    // Avd-tracked sessions take priority — they have their own delivery
+    // channel (CTRL send-message via avd daemon) that doesn't touch the
+    // legacy claude PTY. We open the AvdClient inside sendAvdMessage and
+    // close it again; the daemon owns the underlying worker handle.
+    //
+    // TODO(chunk-11 polish): sendAvdMessage relies on the daemon already
+    // being up. If it died after the initial ensureAvdReady() during start,
+    // we'll surface ECONNREFUSED as `AVD_SEND_FAILED:` to the user instead
+    // of transparently restarting. A follow-up PR can add an ensureAvdReady
+    // call inside sendAvdMessage; intentionally out of scope for chunk-12
+    // to keep the surface area small.
+    if (runner.knowsAvdSession(input.sessionId)) {
+      try {
+        await runner.sendAvdMessage(
+          input.sessionId,
+          input.prompt,
+          input.permissionMode ?? null,
+        );
+        appendSessionEvent(
+          input.sessionId,
+          'resume',
+          `avd prompt=${input.prompt.slice(0, 60)}`,
+        ).catch(() => undefined);
+        const info = runner.getAvdSession(input.sessionId);
+        return { sessionId: input.sessionId, pid: info?.pid ?? null };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`AVD_SEND_FAILED: ${message}`);
+      }
+    }
     // Our PTY → type into the same stdin.
     if (runner.hasSession(input.sessionId)) {
       return runner.resumeSession(input);
@@ -139,8 +169,44 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
     // External dead → resume is safe (no pid conflict).
     return runner.resumeSession(input);
   });
-  ipcMain.handle(IPC.SessionsFork, async (_e, input: ResumeMessageInput) => runner.forkSession(input));
+  ipcMain.handle(IPC.SessionsFork, async (_e, input: ResumeMessageInput) => {
+    // Avd sessions cannot be forked via `claude --fork-session` — that path
+    // assumes a claude conversation file. Surface a clear, prefixed error
+    // so the renderer can show an actionable toast instead of failing
+    // opaquely when the user tries to branch an avd session.
+    if (runner.knowsAvdSession(input.sessionId)) {
+      throw new Error(
+        'FORK_NOT_SUPPORTED: avd 백엔드 세션은 분기를 지원하지 않습니다. 새 세션을 시작해주세요.',
+      );
+    }
+    return runner.forkSession(input);
+  });
   ipcMain.handle(IPC.SessionsCancel, async (_e, sessionId: string) => {
+    // Avd-tracked sessions: route cancel to the avd daemon via the
+    // cancel-session CTRL frame (chunk-10 wires this up server-side). For
+    // now the runner throws `CANCEL_NOT_IMPLEMENTED` — catch it and fall
+    // through to the legacy path so the user still gets a working cancel
+    // (the underlying claude worker may still be reachable via the daemon
+    // dispatch path). Other errors wrap with `AVD_CANCEL_FAILED:`.
+    if (runner.knowsAvdSession(sessionId)) {
+      try {
+        const ok = await runner.cancelAvdSession(sessionId);
+        if (ok) {
+          runner.forgetAvdSession(sessionId);
+        }
+        return ok;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith('CANCEL_NOT_IMPLEMENTED')) {
+          // chunk-10 hasn't shipped yet — fall through to legacy cancel
+          // path (which may still work if the session's underlying claude
+          // worker is discoverable via ~/.claude/daemon).
+          console.warn('[ipc] avd cancel not yet implemented, falling back', sessionId);
+        } else {
+          throw new Error(`AVD_CANCEL_FAILED: ${message}`);
+        }
+      }
+    }
     // Our PTY → kill it.
     if (runner.hasSession(sessionId)) {
       return runner.cancel(sessionId);
