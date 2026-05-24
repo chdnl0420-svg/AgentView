@@ -1,0 +1,86 @@
+/* meta-controls.css — .max-account-toggle, .context-window dial + popup
+   Extracted from global.css lines 1717-1799 during 20260524T1217Z-refactor. */
+
+/* Max-account toggle next to permission select — gates the "전체 허용"
+   option behind a user-set flag so non-Max users don't pick a mode their
+   account can't actually run. */
+label.max-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+  cursor: pointer;
+  height: 28px;
+}
+label.max-toggle:has(input:checked) {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+label.max-toggle input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+
+/* Context-window dial + popup. The donut sits inline with the meta row;
+   clicking expands a small panel below it showing exact token counts.
+   Mirrors the Claude Code desktop's status-bar usage indicator. */
+.context-donut {
+  appearance: none;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0 2px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  transition: transform 120ms ease;
+}
+.context-donut:hover { transform: scale(1.08); }
+.context-donut:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.context-panel {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin: 6px 0 0;
+  max-width: 360px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: ctx-panel-in 180ms ease;
+}
+@keyframes ctx-panel-in {
+  from { transform: translateY(-4px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.context-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.context-row-label { color: var(--text-muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.4px; }
+.context-row-value { color: var(--text-primary); font-family: var(--font-mono); }
+.context-row-value strong { font-size: 14px; color: var(--accent); font-weight: 700; }
+.context-row-pct { color: var(--text-muted); font-size: 11.5px; }
+.context-row-head { margin-bottom: 2px; }
+.context-row-foot { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 4px; }
+.context-bar {
+  height: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.context-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--running), var(--waiting) 65%, var(--crashed));
+  transition: width 240ms ease;
+}

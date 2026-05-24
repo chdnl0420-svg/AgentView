@@ -1,0 +1,24 @@
+/* delete-mode.css — .session-card delete-mode checkboxes + checked emphasis
+   Extracted from global.css lines 2050-2070 during 20260524T1217Z-refactor. */
+
+/* Delete mode — checkboxes on cards + visual "checked" emphasis */
+.session-card.delete-mode {
+  cursor: pointer;
+  padding-left: 34px;
+}
+.session-card.delete-mode:hover {
+  border-color: var(--crashed);
+}
+.session-card.delete-mode.checked {
+  background: rgba(244, 116, 116, 0.10);
+  border-color: var(--crashed);
+  box-shadow: 0 0 0 2px var(--crashed) inset;
+}
+.card-delete-check {
+  position: absolute;
+  top: 10px; left: 10px;
+  width: 18px; height: 18px;
+  accent-color: var(--crashed);
+  z-index: 2;
+  cursor: pointer;
+}

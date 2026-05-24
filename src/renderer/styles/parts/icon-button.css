@@ -1,0 +1,9 @@
+/* icon-button.css — .btn.sm.icon-only — trash icon variant
+   Extracted from global.css lines 2091-2096 during 20260524T1217Z-refactor. */
+
+/* Icon-only sm button — no padding bloat for the trash icon */
+.btn.sm.icon-only {
+  padding: 4px 8px;
+  min-width: 28px;
+  font-size: 14px;
+}

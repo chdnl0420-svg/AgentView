@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentView Refactor — 20260524T1217Z</title>
+<style>
+:root {
+  --bg: #0f1116; --panel: #161a23; --panel-2: #1c2230; --border: #2a3142;
+  --fg: #e6e9ef; --muted: #8e94a4; --accent: #7c9bff; --accent-soft: rgba(124,155,255,.16);
+  --good: #5fd1a4; --warn: #f0c25c; --bad: #f47474;
+  --mono: "JetBrains Mono","Consolas","D2Coding",monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg:#f7f8fc; --panel:#fff; --panel-2:#eef1f6; --border:#d9dde6; --fg:#1a1d27; --muted:#5b6273; }
+}
+* { box-sizing: border-box; }
+html,body { margin:0; padding:0; height:100vh; overflow:hidden;
+  background: var(--bg); color: var(--fg);
+  font-family: "Pretendard","Noto Sans KR","Inter",-apple-system,sans-serif; font-size:14px; line-height:1.5; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header.app-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  height: 48px;
+}
+header.app-head h1 { margin:0; font-size: 14px; font-weight: 600; letter-spacing: .2px; }
+header.app-head .meta { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+header.app-head .spacer { flex: 1; }
+header.app-head .pill {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-weight: 600;
+}
+[role="tablist"] {
+  display: flex; gap: 4px; align-items: center; margin-left: 8px;
+}
+[role="tab"] {
+  appearance: none; background: transparent; border: 0;
+  color: var(--muted); font: inherit; font-size: 12px;
+  padding: 6px 13px; border-radius: 6px; cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+[role="tab"]:hover { color: var(--fg); background: var(--panel-2); }
+[role="tab"][aria-selected="true"] {
+  color: var(--accent); background: var(--accent-soft);
+  border-bottom-color: var(--accent);
+}
+[role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main { height: calc(100vh - 48px); overflow: hidden; padding: 14px 18px; }
+[role="tabpanel"] { display: none; height: 100%; overflow: auto; padding-right: 8px; }
+[role="tabpanel"].active { display: block; }
+h2 { font-size: 16px; margin: 0 0 8px; }
+h3 { font-size: 13.5px; margin: 14px 0 6px; color: var(--accent); }
+.cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+.card .value { font-size: 22px; font-weight: 700; margin-top: 4px; font-family: var(--mono); }
+.card .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.card.good .value { color: var(--good); }
+.card.warn .value { color: var(--warn); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--panel-2); position: sticky; top: 0; font-weight: 600; color: var(--muted); font-size: 11.5px; }
+tr:hover td { background: var(--panel-2); }
+td.num { font-family: var(--mono); text-align: right; }
+.cat-good { color: var(--good); font-weight: 600; }
+.cat-warn { color: var(--warn); font-weight: 600; }
+.cat-bad { color: var(--bad); font-weight: 600; }
+ul { margin: 4px 0 4px 18px; padding: 0; }
+li { margin: 3px 0; }
+pre { font-family: var(--mono); font-size: 11.5px; background: var(--panel-2); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+code { font-family: var(--mono); font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 3px; }
+.callout {
+  border-left: 3px solid var(--accent); background: var(--accent-soft);
+  padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0;
+}
+.callout.warn { border-left-color: var(--warn); background: rgba(240,194,92,.10); }
+.callout.tip  { border-left-color: var(--good); background: rgba(95,209,164,.10); }
+@media print {
+  html,body { height:auto; overflow:visible; }
+  [role="tabpanel"] { display: block !important; padding: 12px 0; break-before: page; }
+  [role="tab"] { display: none; }
+  header.app-head [role="tablist"] { display:none; }
+}
+</style>
+</head>
+<body>
+
+<header class="app-head" role="banner">
+  <h1>AgentView Refactor</h1>
+  <span class="meta">20260524T1217Z</span>
+  <span class="pill">9/9 단계 완료</span>
+  <div class="spacer"></div>
+  <nav role="tablist" aria-label="report tabs">
+    <button role="tab" aria-selected="true" aria-controls="tab-summary" id="t-summary">한눈에</button>
+    <button role="tab" aria-selected="false" aria-controls="tab-detail" id="t-detail">분리 결과</button>
+    <button role="tab" aria-selected="false" aria-controls="tab-verify" id="t-verify">검증</button>
+    <button role="tab" aria-selected="false" aria-controls="tab-followup" id="t-followup">후속</button>
+  </nav>
+</header>
+
+<main>
+
+<section role="tabpanel" id="tab-summary" aria-labelledby="t-summary" class="active">
+  <div class="cards">
+    <div class="card good"><div class="label">변경 파일</div><div class="value">50</div><div class="sub">추가 47 / 수정 2 / 삭제 1</div></div>
+    <div class="card good"><div class="label">최대 파일 크기</div><div class="value">354L</div><div class="sub">App.tsx · 400 hard cap 이하</div></div>
+    <div class="card good"><div class="label">typecheck / build</div><div class="value">green</div><div class="sub">npm run typecheck + build</div></div>
+    <div class="card good"><div class="label">codex review</div><div class="value">LGTM</div><div class="sub">신규 결함 0건</div></div>
+    <div class="card good"><div class="label">customer 회귀</div><div class="value">0</div><div class="sub">refactor 의도된 invisibility</div></div>
+  </div>
+
+  <div class="callout tip">
+    <strong>핵심:</strong> AgentView 의 3대 모놀리스 (<code>src/main/ipc.ts</code> 772줄, <code>src/renderer/App.tsx</code> 957줄, <code>src/renderer/styles/global.css</code> 2335줄) 를 모두 객체·역할 단위로 분리. 동작·UX 변경 없음. 모든 파일 400줄 hard cap 이하.
+  </div>
+
+  <h2>분리 전 → 분리 후</h2>
+  <table>
+    <thead><tr><th>파일</th><th class="num">before</th><th class="num">after (최대)</th><th>분리 산출</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/main/ipc.ts</code></td><td class="num">772</td><td class="num cat-good">332</td><td><code>src/main/ipc/</code> 9 modules</td></tr>
+      <tr><td><code>src/renderer/App.tsx</code></td><td class="num">957</td><td class="num cat-good">354</td><td>App.tsx + SessionsGrid + 11 state hooks + 2 lib</td></tr>
+      <tr><td><code>src/renderer/styles/global.css</code></td><td class="num">2335</td><td class="num cat-good">63</td><td><code>parts/</code> 27 css files (@import 목록)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>9 단계 결과</h2>
+  <table>
+    <thead><tr><th>step</th><th>결과</th><th>비고</th></tr></thead>
+    <tbody>
+      <tr><td>1 detect</td><td class="cat-good">pass</td><td>외부 의존성 0, 모놀리스 3 식별</td></tr>
+      <tr><td>2 domain (adapt)</td><td class="cat-good">pass</td><td>BC = main IPC / renderer state / renderer styles</td></tr>
+      <tr><td>3 TDD (characterization)</td><td class="cat-good">pass</td><td>typecheck/build 분리 전후 동일</td></tr>
+      <tr><td>4 QA</td><td class="cat-good">pass</td><td>모든 파일 400 이하, build green</td></tr>
+      <tr><td>5 codex review</td><td class="cat-good">LGTM</td><td>HIGH/MEDIUM 모두 pre-existing</td></tr>
+      <tr><td>6 customer</td><td class="cat-good">pass</td><td>UX 변화 없음</td></tr>
+      <tr><td>7 audit</td><td class="cat-good">pass</td><td>자가 수정 0회</td></tr>
+      <tr><td>8 summary</td><td class="cat-good">current</td><td>본 보고서</td></tr>
+      <tr><td>9 commit</td><td>pending</td><td>본 단계 후 진행 (push 안 함)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section role="tabpanel" id="tab-detail" aria-labelledby="t-detail">
+  <h2>main IPC 분리 (9 modules)</h2>
+  <table>
+    <thead><tr><th>파일</th><th class="num">줄</th><th>책임</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/main/ipc/index.ts</code></td><td class="num">62</td><td>composition root — runner/liveWatcher 소유 + register* 호출</td></tr>
+      <tr><td><code>broadcast.ts</code></td><td class="num">8</td><td>broadcast() helper</td></tr>
+      <tr><td><code>loaders.ts</code></td><td class="num">102</td><td>loadCommands / loadAgents + AgentsList / CommandsList</td></tr>
+      <tr><td><code>sessions.ts</code></td><td class="num">332</td><td>18 Sessions* handlers + cancel loop + outputTails + bulk delete</td></tr>
+      <tr><td><code>picker.ts</code></td><td class="num">44</td><td>PickDirectory / PickFiles / SavePastedImage</td></tr>
+      <tr><td><code>workspace.ts</code></td><td class="num">38</td><td>Workspace* (list / read / exportReport / openRoot)</td></tr>
+      <tr><td><code>filePreview.ts</code></td><td class="num">135</td><td>FilePreview + previewFileForRenderer + 확장자 상수</td></tr>
+      <tr><td><code>windowChrome.ts</code></td><td class="num">83</td><td>Window* / Options* / Shell* (OS 연동)</td></tr>
+      <tr><td><code>misc.ts</code></td><td class="num">42</td><td>Git* / Updater* / AppVersion / UsageFetch / ClaudeStatus</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Renderer state (11 hooks + 2 helpers + 1 component)</h2>
+  <table>
+    <thead><tr><th>파일</th><th class="num">줄</th><th>책임</th></tr></thead>
+    <tbody>
+      <tr><td><code>App.tsx</code></td><td class="num">354</td><td>composition + 3 view branch + onStartNewSession</td></tr>
+      <tr><td><code>components/SessionsGrid.tsx</code></td><td class="num">169</td><td>카드 그리드 + 필터 탭 + 삭제 모드 UI</td></tr>
+      <tr><td><code>lib/sessionFilters.ts</code></td><td class="num">32</td><td>classify + isEmptyDeadSession + SessionFilter type</td></tr>
+      <tr><td><code>lib/pendingSession.ts</code></td><td class="num">66</td><td>PendingSession type + makeTempId + pendingToBgSession + PENDING_* 상수</td></tr>
+      <tr><td><code>state/useSessionScan.ts</code></td><td class="num">76</td><td>scan + reloadSessions + sessions watcher + flash</td></tr>
+      <tr><td><code>state/useAgentsAndRunning.ts</code></td><td class="num">33</td><td>agents/running + watchers</td></tr>
+      <tr><td><code>state/usePendingSessions.ts</code></td><td class="num">78</td><td>pending + 2-stage cleanup</td></tr>
+      <tr><td><code>state/useDrafts.ts</code></td><td class="num">55</td><td>newDraft + resume drafts + 영속화</td></tr>
+      <tr><td><code>state/useQueues.ts</code></td><td class="num">29</td><td>queue per session</td></tr>
+      <tr><td><code>state/useRenames.ts</code></td><td class="num">46</td><td>renames + storage focus + backend change</td></tr>
+      <tr><td><code>state/useClaudeStatus.ts</code></td><td class="num">38</td><td>claudeStatus 30s 폴링</td></tr>
+      <tr><td><code>state/useClock.ts</code></td><td class="num">11</td><td>1Hz now state</td></tr>
+      <tr><td><code>state/useBackForwardNav.ts</code></td><td class="num">54</td><td>Esc + mouse XButton1/2 → selectedId</td></tr>
+      <tr><td><code>state/useRunEventsToast.ts</code></td><td class="num">46</td><td>run-event 구독 + toast + auto-dismiss</td></tr>
+      <tr><td><code>state/useDeleteMode.ts</code></td><td class="num">64</td><td>deleteMode + selectedForDelete + performBulkDelete</td></tr>
+      <tr><td><code>state/useViewMode.ts</code></td><td class="num">23</td><td>viewMode + viewModeRef + toggle</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Renderer styles (27 parts)</h2>
+  <p style="color: var(--muted); font-size: 12.5px;">tokens → base → layout → topbar → component styles → mode overrides 순서 보존. cascade specificity 영향 없음.</p>
+  <table>
+    <thead><tr><th>part</th><th class="num">줄</th></tr></thead>
+    <tbody>
+      <tr><td>tokens.css</td><td class="num">46</td></tr>
+      <tr><td>base.css</td><td class="num">119</td></tr>
+      <tr><td>layout.css</td><td class="num">36</td></tr>
+      <tr><td>topbar.css</td><td class="num">77</td></tr>
+      <tr><td>dashboard.css</td><td class="num">152</td></tr>
+      <tr><td>detail.css</td><td class="num">255</td></tr>
+      <tr><td>conversation.css</td><td class="num">323</td></tr>
+      <tr><td>tool-message.css</td><td class="num">105</td></tr>
+      <tr><td>attach-banner.css</td><td class="num">67</td></tr>
+      <tr><td>attachments.css</td><td class="num">50</td></tr>
+      <tr><td>slash-popup.css</td><td class="num">57</td></tr>
+      <tr><td>input-bar.css</td><td class="num">168</td></tr>
+      <tr><td>markdown-stream.css</td><td class="num">53</td></tr>
+      <tr><td>tool-group.css</td><td class="num">47</td></tr>
+      <tr><td>ask-buttons.css</td><td class="num">34</td></tr>
+      <tr><td>permission.css</td><td class="num">68</td></tr>
+      <tr><td>ask-panel.css</td><td class="num">96</td></tr>
+      <tr><td>meta-controls.css</td><td class="num">86</td></tr>
+      <tr><td>update-banner.css</td><td class="num">87</td></tr>
+      <tr><td>tutorial.css</td><td class="num">36</td></tr>
+      <tr><td>ask-panel-extras.css</td><td class="num">31</td></tr>
+      <tr><td>context-popup.css</td><td class="num">54</td></tr>
+      <tr><td>cli-status.css</td><td class="num">52</td></tr>
+      <tr><td>delete-mode.css</td><td class="num">24</td></tr>
+      <tr><td>code-block.css</td><td class="num">21</td></tr>
+      <tr><td>icon-button.css</td><td class="num">9</td></tr>
+      <tr><td>single-mode.css</td><td class="num">241</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section role="tabpanel" id="tab-verify" aria-labelledby="t-verify">
+  <h2>QA — <code>npm run typecheck</code> + <code>npm run build</code></h2>
+  <ul>
+    <li>typecheck: 0 errors, 0 warnings</li>
+    <li>build: main 129.67 kB · preload 8.15 kB · renderer JS 394.80 kB · CSS 81.77 kB · 빌드 시간 ~390ms</li>
+    <li>경고 1건 → 즉시 수정: <code>conversationLoader</code> dynamic import → static</li>
+    <li>renderer layout (CDP 측정): cards / single / detail 모두 동일 (top/height 일치)</li>
+  </ul>
+
+  <h2>Codex external review — <span class="cat-good">LGTM</span></h2>
+  <ul>
+    <li><strong>HIGH</strong> (pre-existing, 본 회차 도입 아님): <code>usePendingSessions</code> stage-1 effect 의 <code>[scan, pending]</code> dep array → 피드백 루프 잠재. <em>원본 보존</em>.</li>
+    <li><strong>MEDIUM</strong> (회차 외): <code>DEFAULT_CWD='D:\Project\VisualAgents'</code> 하드코딩. <em>원본 보존</em>.</li>
+    <li><strong>MEDIUM</strong> (회차 외): <code>useRunEventsToast</code> 의 모든 이벤트마다 reload. <em>원본 보존</em>.</li>
+    <li><strong>LOW</strong>: CSS @import 순서 OK, IPC 순환 import 없음, 모든 handler 등록 확인, dep array 안정성 OK.</li>
+  </ul>
+
+  <h2>Customer test (페르소나: AgentView 1.0.7 일반 사용자)</h2>
+  <ul>
+    <li>5 시나리오 (cards 진입 / 카드 클릭 → detail / 단일 모드 / 720x480 최소 사이즈 / WindowChrome) 모두 회귀 없음</li>
+    <li>5초 테스트 / Time-to-First-Value / 첫 클릭 정확도 / Cognitive Walkthrough 4질문 모두 통과</li>
+    <li>구조 변경이 사용자에게 <strong>인식 불가능</strong> = 의도된 목표</li>
+  </ul>
+
+  <h2>Audit findings</h2>
+  <ul>
+    <li>HIGH/CRITICAL 신규 결함: 0건</li>
+    <li>자가 수정 사용 횟수: 0회 (산출물 0/2, 스킬 0/2)</li>
+    <li>200줄 권장 초과 5 파일 (App.tsx 354, sessions.ts 332, conversation.css 323, detail.css 255, single-mode.css 241) — 응집도 보존 위해 의도적 유지, 400 hard cap 이하</li>
+  </ul>
+</section>
+
+<section role="tabpanel" id="tab-followup" aria-labelledby="t-followup">
+  <h2>회차 외 후속 권장 (별도 ADR 회차)</h2>
+
+  <div class="callout warn">
+    <strong>ADR 1 — <code>usePendingSessions</code> stale-closure dep:</strong> Stage-1 cleanup effect 의 dep array <code>[scan, pending]</code> 가 함수형 setPending 호출 후 또 trigger 되는 패턴. 원본 보존이라 본 회차 미수정. 별도 회차에서 <code>useRef</code> 로 pending 보관 또는 cleanup 분리 검토.
+  </div>
+
+  <div class="callout warn">
+    <strong>ADR 2 — <code>DEFAULT_CWD</code> 하드코딩:</strong> <code>'D:\\Project\\VisualAgents'</code> 가 App.tsx + InputBar fallback 으로 노출됨. 다른 개발 환경 즉시 오작동. <code>app.getPath('home')</code> 또는 마지막 사용 cwd persist 권장.
+  </div>
+
+  <div class="callout">
+    <strong>ADR 3 — 단위 테스트 도입:</strong> 본 회차는 characterization (typecheck + build + CDP 측정) 으로 회귀 확인. 향후 React Testing Library + Vitest 도입 시 hook 단위 테스트로 커버리지 ↑.
+  </div>
+
+  <div class="callout">
+    <strong>ADR 4 — 200줄 권장 초과 5 파일:</strong> App.tsx (composition + 3 view branch), sessions.ts (18 핸들러), 큰 CSS parts (conversation/detail/single-mode). 응집도 보존 위해 의도적 유지. 향후 view branch 별 컴포넌트 / 핸들러 그룹 sub-module / CSS modules 도입 시 재분리 검토.
+  </div>
+
+  <h2>본 회차 산출물 (회차 폴더 내)</h2>
+  <ul>
+    <li><a href="./01-detect/input.md">01-detect/input.md</a> · <a href="./01-detect/environment.md">environment.md</a> · <a href="./01-detect/cqrs-es-warning.md">cqrs-es-warning.md</a></li>
+    <li><a href="./02-domain/domain-model.md">02-domain/domain-model.md</a></li>
+    <li><a href="./04-qa/report.md">04-qa/report.md</a></li>
+    <li><a href="./05-review/file-list.md">05-review/file-list.md</a> · <a href="./05-review/result.md">result.md</a></li>
+    <li><a href="./06-customer/report.md">06-customer/report.md</a></li>
+    <li><a href="./07-audit/findings.md">07-audit/findings.md</a></li>
+    <li><a href="./log.md">log.md</a></li>
+    <li><a href="./summary.md">summary.md</a> (본 보고서 markdown 버전)</li>
+  </ul>
+</section>
+
+</main>
+
+<script>
+(function() {
+  const tabs = document.querySelectorAll('[role="tab"]');
+  const panels = document.querySelectorAll('[role="tabpanel"]');
+  function activate(tabId) {
+    tabs.forEach(t => {
+      const on = t.id === tabId;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+    });
+    panels.forEach(p => {
+      const on = p.getAttribute('aria-labelledby') === tabId;
+      p.classList.toggle('active', on);
+    });
+    if (history.replaceState) history.replaceState(null, '', '#' + tabId);
+  }
+  tabs.forEach(t => {
+    t.addEventListener('click', () => activate(t.id));
+    t.addEventListener('keydown', (e) => {
+      const order = ['t-summary','t-detail','t-verify','t-followup'];
+      const i = order.indexOf(t.id);
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = order[(i + 1) % order.length];
+        document.getElementById(next).focus();
+        activate(next);
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const prev = order[(i - 1 + order.length) % order.length];
+        document.getElementById(prev).focus();
+        activate(prev);
+      }
+    });
+  });
+  // Deep link via #hash
+  const hash = location.hash.replace('#','');
+  if (hash && document.getElementById(hash)) {
+    activate(hash);
+  }
+})();
+</script>
+
+</body>
+</html>

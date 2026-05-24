@@ -1,0 +1,52 @@
+/* cli-status.css — .cli-status-bar TUI-style bottom line indicator
+   Extracted from global.css lines 2001-2049 during 20260524T1217Z-refactor. */
+
+/* CLI-style status bar mirroring claude TUI's bottom-line indicator:
+   * Verb (parens with elapsed · ↑ tokens · tool hint)
+   ↳ Tip: rotating contextual tip.
+   Sits above the composer when busy; replaces the inline thinking bubble
+   for cases where the user wants the compact CLI look. */
+.cli-status-bar {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px 16px 6px;
+  background: var(--bg-base);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.cli-status-asterisk {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  animation: cli-blink 1.4s ease-in-out infinite;
+}
+@keyframes cli-blink {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.cli-status-verb {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.cli-status-verb::after { content: '…'; }
+.cli-status-paren { color: var(--text-muted); }
+.cli-status-elapsed,
+.cli-status-tokens { color: var(--text-secondary); }
+.cli-status-hint { color: var(--waiting); }
+.cli-status-sep { color: var(--text-muted); }
+.cli-status-tip-row {
+  width: 100%;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  padding-left: 8px;
+  display: flex;
+  gap: 6px;
+}
+.cli-status-tip-arrow { color: var(--text-muted); }
+.cli-status-tip { color: var(--text-muted); }
+

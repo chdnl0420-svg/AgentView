@@ -1,0 +1,96 @@
+/* ask-panel.css — .ask-panel slide-in panel above composer + ask-panel-* sub-elements
+   Extracted from global.css lines 1624-1716 during 20260524T1217Z-refactor. */
+
+/* AskUserQuestion dedicated panel — mounts above the composer when the
+   agent has a pending question. Replaces the in-bubble click UI so the
+   user can answer without scrolling to find the latest tool_use. Styled
+   to match the prominence of Claude Code desktop's AskUserQuestion. */
+.ask-panel {
+  background: linear-gradient(180deg, rgba(124,155,255,0.10), rgba(124,155,255,0.04));
+  border-top: 1px solid var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: ask-panel-slide-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes ask-panel-slide-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.ask-panel-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--accent);
+  font-weight: 700;
+}
+.ask-panel-icon { font-size: 14px; }
+.ask-panel-hint {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.ask-panel-q { display: flex; flex-direction: column; gap: 8px; }
+.ask-panel-header {
+  font-size: 11px; font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.ask-panel-question {
+  font-size: 15px; font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+.ask-panel-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+button.ask-panel-option {
+  appearance: none;
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  color: var(--text-primary);
+  text-align: left;
+  font: inherit;
+  transition: all 120ms ease;
+}
+button.ask-panel-option:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(124,155,255,0.18);
+}
+button.ask-panel-option:disabled { opacity: 0.5; cursor: wait; }
+.ask-panel-key {
+  display: inline-grid;
+  place-items: center;
+  width: 24px; height: 24px;
+  background: var(--accent);
+  color: #0b0d12;
+  border-radius: 6px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.ask-panel-option-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ask-panel-option-body strong { color: var(--accent); font-weight: 600; font-size: 13.5px; }
+.ask-panel-desc {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+

@@ -1,0 +1,53 @@
+/* markdown-stream.css — .stream job log view + .markdown a/code/pre/blockquote/strong/p/h*/ul/ol/hr/table
+   Extracted from global.css lines 1431-1480 during 20260524T1217Z-refactor. */
+
+/* ===== Job stream view ===== */
+
+.stream {
+  font-family: var(--font-mono);
+  font-size: 12.5px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-all;
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  color: var(--text-primary);
+  max-height: 100%; overflow: auto;
+}
+.stream .err { color: var(--crashed); }
+
+.markdown a { color: var(--accent); text-decoration: none; }
+.markdown a:hover { text-decoration: underline; }
+.markdown code {
+  font-family: var(--font-mono); font-size: 12.5px;
+  background: var(--bg-elev-2); padding: 1px 6px; border-radius: 4px; color: #e0b3ff;
+}
+.markdown pre {
+  background: var(--bg-elev-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 0.4em 0;
+  overflow-x: auto; font-size: 12.5px;
+}
+.markdown pre code { background: none; padding: 0; color: var(--text-primary); }
+.markdown blockquote {
+  margin: 0.35em 0; padding: 5px 12px;
+  border-left: 3px solid var(--accent); background: var(--accent-soft);
+  color: var(--text-secondary); border-radius: 0 6px 6px 0;
+}
+.markdown strong { color: #fff; font-weight: 600; }
+
+.markdown p {
+  margin: 0.25em 0;
+}
+.markdown p:first-child { margin-top: 0; }
+.markdown p:last-child { margin-bottom: 0; }
+.markdown h1 { margin: 0.6em 0 0.25em; font-size: 17px; }
+.markdown h2 { margin: 0.55em 0 0.2em; font-size: 15px; }
+.markdown h3 { margin: 0.45em 0 0.15em; font-size: 14px; color: var(--text-secondary); }
+.markdown h4 { margin: 0.35em 0 0.1em; font-size: 13.5px; }
+.markdown ul, .markdown ol { margin: 0.25em 0; padding-left: 20px; }
+.markdown li { margin: 0.05em 0; }
+.markdown hr { margin: 0.5em 0; }
+.markdown table { margin: 0.4em 0; }

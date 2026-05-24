@@ -1,0 +1,46 @@
+/* tokens.css — :root tokens (colors, radii, fonts, shadows)
+   Extracted from global.css lines 1-43 during 20260524T1217Z-refactor. */
+
+:root {
+  color-scheme: dark;
+  --bg-base: #0b0d12;
+  --bg-elev-1: #11141c;
+  --bg-elev-2: #181c28;
+  --bg-elev-3: #21263a;
+  --bg-elev-4: #2b3149;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text-primary: #ebedf3;
+  --text-secondary: #a6acbe;
+  --text-muted: #6c7385;
+  --accent: #7c9bff;
+  --accent-strong: #5e7eff;
+  --accent-soft: rgba(124, 155, 255, 0.14);
+  --running: #6dd9a8;
+  --running-soft: rgba(109, 217, 168, 0.16);
+  --idle: #7c9bff;
+  --idle-soft: rgba(124, 155, 255, 0.16);
+  --waiting: #f0c25c;
+  --waiting-soft: rgba(240, 194, 92, 0.16);
+  /* Completed = task is DONE (not actively working). Distinct cyan so it
+     doesn't blend with the green --running. Previous palette reused
+     --running here, which made running/completed look identical. */
+  --completed: #5fb6e0;
+  --completed-soft: rgba(95, 182, 224, 0.18);
+  --finished: #6c7385;
+  --finished-soft: rgba(108, 115, 133, 0.16);
+  --crashed: #f47474;
+  --crashed-soft: rgba(244, 116, 116, 0.16);
+  --user-msg: #2a6fff;
+  --user-msg-soft: rgba(42, 111, 255, 0.14);
+  --assistant-msg: #b388ff;
+  --tool-msg: #f0c25c;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --font-sans:
+    'Pretendard', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Malgun Gothic', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'D2Coding', monospace;
+}
