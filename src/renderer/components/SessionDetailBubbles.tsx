@@ -375,15 +375,28 @@ function ToolUseBubble({
   );
 }
 
+// researcher item #76 — flag tool_result bubbles that look like errors
+// with a red accent border so failures jump out instead of blending
+// into the long tool-call stack. Matches common claude-cli error
+// patterns plus a generic "Error: …" prefix.
+function looksLikeError(text: string | undefined): boolean {
+  if (!text) return false;
+  const s = text.slice(0, 400);
+  return /\b(error|exception|traceback|fatal|failed|cannot|denied|forbidden|timeout)\b/i.test(s)
+    || /^\s*Error[:\s]/i.test(s)
+    || /^\s*\[[A-Z]+\]\s*Error/.test(s);
+}
+
 function ToolResultBubble({ m, fresh }: { m: ConversationMessage; fresh: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const answer = parseAskUserQuestionResult(m.text);
   const summary = answer ? answerSummary(answer) : summarizeToolResult(m.text || '');
   const label = answer ? '🙋 사용자 답변' : '↩ 결과';
+  const isError = !answer && looksLikeError(m.text);
   return (
-    <div className="msg tool">
-      <div className="avatar">↩</div>
-      <div className={`bubble tool-bubble ${fresh ? 'fresh' : ''}`}>
+    <div className={`msg tool ${isError ? 'tool-error' : ''}`}>
+      <div className="avatar">{isError ? '⚠' : '↩'}</div>
+      <div className={`bubble tool-bubble ${fresh ? 'fresh' : ''} ${isError ? 'tool-bubble-error' : ''}`}>
         <button
           type="button"
           className="tool-header"

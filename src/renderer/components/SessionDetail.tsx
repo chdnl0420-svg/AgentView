@@ -109,6 +109,7 @@ export function SessionDetail({
   const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef<boolean>(true);
+  const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
 
   // ---- File preview modal + path context menu (page-level singletons) ----
   const [preview, setPreview] = useState<{ path: string } | null>(null);
@@ -605,8 +606,22 @@ export function SessionDetail({
   const onBodyScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottomRef.current = distanceFromBottom < 60;
+    const atBottom = distanceFromBottom < 60;
+    stickToBottomRef.current = atBottom;
+    setIsAtBottom(atBottom);
   };
+
+  // researcher item #92 — explicit "맨 아래로" FAB while the user is
+  // scrolled up. Combined with #93 the user sees the FAB ahead of any
+  // fresh streamed message so it acts as both navigation and a 'new
+  // messages waiting' indicator.
+  const scrollToBottom = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    stickToBottomRef.current = true;
+    setIsAtBottom(true);
+  }, []);
 
   const isOurs = running.some((r) => r.sessionId === session.sessionId);
   // External and currently alive → claude won't let us attach.
@@ -984,6 +999,17 @@ export function SessionDetail({
         </div>
       </header>
 
+      {!isAtBottom && data && data.messages.length > 0 && (
+        <button
+          type="button"
+          className="scroll-to-bottom-fab"
+          onClick={scrollToBottom}
+          title="맨 아래로 (새 메시지 보기)"
+          aria-label="맨 아래로 스크롤"
+        >
+          ↓
+        </button>
+      )}
       <div className="detail-body" ref={bodyRef} onScroll={onBodyScroll}>
         {loading && <div className="empty-detail">대화 로드 중…</div>}
         {!loading && !data && (

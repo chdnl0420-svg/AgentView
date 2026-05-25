@@ -18,6 +18,36 @@
   text-decoration: underline;
 }
 
+/* Scroll-to-bottom FAB (researcher item #92) — appears while user is
+   scrolled up. Positioned absolute over the message body so the click
+   target stays put while messages stream in. */
+.scroll-to-bottom-fab {
+  position: absolute;
+  right: 24px;
+  bottom: 96px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #0b0d13;
+  border: 0;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.32), 0 0 0 1px var(--accent-strong, var(--accent));
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  z-index: 8;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.scroll-to-bottom-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.4), 0 0 0 1px var(--accent-strong, var(--accent));
+}
+.scroll-to-bottom-fab:active {
+  transform: translateY(0);
+}
+
 /* ===== Detail page (fullscreen) ===== */
 
 .detail-page {
