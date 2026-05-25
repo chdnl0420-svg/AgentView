@@ -259,10 +259,15 @@ export function SessionDetail({
       if (m.role === 'assistant') {
         if (!model && m.model) model = m.model;
         if (!inputTokens && !outputTokens) {
-          const raw = m.raw as { message?: { usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } } };
+          // Display only the freshly-written input tokens. cache_read /
+          // cache_creation portions are huge for a brand-new session
+          // (system prompt, tools list, CLAUDE.md, skills) and made the
+          // footer look like the user already spent tens of thousands
+          // of tokens before typing anything.
+          const raw = m.raw as { message?: { usage?: { input_tokens?: number; output_tokens?: number } } };
           const u = raw?.message?.usage;
           if (u) {
-            inputTokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+            inputTokens = u.input_tokens || 0;
             outputTokens = u.output_tokens || 0;
           }
         }
