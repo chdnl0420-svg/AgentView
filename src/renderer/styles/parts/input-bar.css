@@ -121,16 +121,18 @@
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .btn.add-attach {
-  width: 38px;
-  font-size: 18px;
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
   padding: 0;
   background: transparent;
   border: 0;
   display: grid;
   place-items: center;
-  align-self: stretch;
+  align-self: start;
+  margin-top: 4px;
   color: var(--text-muted);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 .btn.add-attach:hover:not(:disabled) {
   background: var(--bg-elev-3);
@@ -155,11 +157,26 @@
   padding: 0 2px 2px 6px;
   min-width: 132px;
 }
+.input-send .btn-shortcut {
+  font-size: 10.5px;
+  font-weight: 400;
+  opacity: 0.75;
+  margin-left: 6px;
+  display: inline-block;
+  /* Fixed width — keeps the shortcut hint slot identical width whether
+     the label is 'Enter' or 'Ctrl+Enter', so toggling the option does
+     not resize the button. */
+  width: 70px;
+  text-align: left;
+  letter-spacing: 0;
+  vertical-align: middle;
+}
 .input-send .btn {
   border-radius: 10px;
   padding: 9px 14px;
   font-weight: 600;
   letter-spacing: 0.2px;
+  width: 160px;
 }
 .input-send .btn.primary {
   box-shadow: 0 1px 0 rgba(0,0,0,0.12), 0 0 12px var(--accent-soft);

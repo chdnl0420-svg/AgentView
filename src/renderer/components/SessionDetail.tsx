@@ -1263,7 +1263,6 @@ export function SessionDetail({
             ? '외부 에이전트에 직접 전송. Ctrl+Enter.'
             : '이 에이전트에 이어서 보낼 메시지. Ctrl+Enter.'
         }
-        buttonLabel={externalAlive ? '↗ 외부 에이전트로 전송' : '↗ 이어서 보내기'}
       />
     </div>
   );

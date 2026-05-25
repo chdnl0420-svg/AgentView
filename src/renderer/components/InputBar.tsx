@@ -883,34 +883,6 @@ export function InputBar(props: InputBarProps) {
           >
             +
           </button>
-          <div className="history-nav">
-            <button
-              type="button"
-              className="btn history-btn"
-              onClick={() => {
-                navigateHistoryUp();
-                requestAnimationFrame(() => textareaRef.current?.focus());
-              }}
-              disabled={disabled || history.length === 0}
-              title="메시지 히스토리 — 이전"
-              aria-label="이전 메시지 불러오기"
-            >
-              ↑
-            </button>
-            <button
-              type="button"
-              className="btn history-btn"
-              onClick={() => {
-                navigateHistoryDown();
-                requestAnimationFrame(() => textareaRef.current?.focus());
-              }}
-              disabled={disabled || historyIdx < 0}
-              title="메시지 히스토리 — 다음"
-              aria-label="다음 메시지 불러오기"
-            >
-              ↓
-            </button>
-          </div>
         </div>
         <textarea
           ref={textareaRef}
@@ -1043,15 +1015,20 @@ export function InputBar(props: InputBarProps) {
             </button>
           ) : (
             <button className="btn primary" onClick={send} disabled={!canSend}>
-              {sending ? '전송 중…' : props.buttonLabel ?? '전송'}
+              {sending ? '전송 중…' : (
+                <>
+                  {props.buttonLabel ?? '전송'}
+                  <span className="btn-shortcut">{enterToSend ? 'Enter' : 'Ctrl+Enter'}</span>
+                </>
+              )}
             </button>
           )}
           <span className="hint">
             {showCancelButton
               ? '입력하면 전송으로 전환'
               : enterToSend
-              ? 'Enter · Shift+Enter 줄바꿈'
-              : 'Ctrl+Enter · ↑↓ 히스토리'}
+              ? 'Shift+Enter 줄바꿈 · ↑↓ 히스토리'
+              : 'Enter 줄바꿈 · ↑↓ 히스토리'}
           </span>
         </div>
       </div>
