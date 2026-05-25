@@ -14,7 +14,7 @@ import { adoptLive, type AdoptLiveResult } from './adoption.js';
 import { acquirePid, releasePid } from './pid.js';
 import { getProcessInfo } from './process-info.js';
 import { startServer, type ServerHandle } from './server.js';
-import { createWorkerFactory } from './workers/index.js';
+import { createWorkerFactory, createSelfPtySpawn } from './workers/index.js';
 
 const HOME = homedir();
 const DAEMON_DIR = join(HOME, '.agentview', 'daemon');
@@ -103,6 +103,13 @@ async function main(): Promise<void> {
       catalog: adopt.catalog,
       roster: adopt.roster,
       workerFactory: createWorkerFactory({
+        // AVD's reason for existence: replace the unstable external
+        // claude supervisor. Inject the self-PTY fallback so a missing
+        // supervisor no longer leaves every new session stuck at the
+        // "session boot" UI state with no worker spawned.
+        externalClaudeOptions: {
+          selfPtySpawn: createSelfPtySpawn(),
+        },
         codexOptions: {
           conversationDir: join(DAEMON_DIR, 'conversations'),
         },

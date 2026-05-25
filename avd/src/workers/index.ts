@@ -43,23 +43,34 @@ export {
   encodeExternalClaudeFrame,
   sendPromptToExternalClaude,
 } from './external-claude.js';
+export type {
+  ExternalClaudeAdapterOptions,
+  PromptDelivery,
+  SelfPtySpawn,
+} from './external-claude.js';
 export {
   CodexAdapter,
   buildCodexCommand,
 } from './codex.js';
+export {
+  createSelfPtySpawn,
+  buildSelfPtyArgs,
+} from './self-pty.js';
+export type { SelfPtyOptions } from './self-pty.js';
 
-import { ExternalClaudeAdapter } from './external-claude.js';
+import { ExternalClaudeAdapter, type ExternalClaudeAdapterOptions } from './external-claude.js';
 import { CodexAdapter, type CodexAdapterOptions } from './codex.js';
 import type { WorkerAdapter, WorkerAdapterRequest, WorkerFactory } from './adapter.js';
 
 export interface WorkerFactoryOptions {
   externalClaude?: WorkerAdapter;
+  externalClaudeOptions?: ExternalClaudeAdapterOptions;
   codex?: WorkerAdapter;
   codexOptions?: CodexAdapterOptions;
 }
 
 export function createWorkerFactory(options: WorkerFactoryOptions = {}): WorkerFactory {
-  const externalClaude = options.externalClaude ?? new ExternalClaudeAdapter();
+  const externalClaude = options.externalClaude ?? new ExternalClaudeAdapter(options.externalClaudeOptions);
   const codex = options.codex ?? new CodexAdapter(options.codexOptions);
   return async (request: WorkerAdapterRequest): Promise<WorkerHandle> => {
     if (request.backend === 'external-claude') {
