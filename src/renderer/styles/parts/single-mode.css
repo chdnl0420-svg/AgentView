@@ -201,6 +201,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.session-list-pin-icon {
+  color: var(--accent);
+  font-size: 11px;
+  margin-right: 2px;
+}
+.session-list-name mark.hl,
+.session-list-preview mark.hl {
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 0 1px;
+  border-radius: 2px;
+  font-weight: 600;
+}
 .session-list-rename-input {
   background: var(--bg-elev-2);
   border: 1px solid var(--accent);

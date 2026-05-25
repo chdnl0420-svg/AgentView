@@ -1,9 +1,46 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type React from 'react';
 import type { BgSession } from '@shared/types';
 import { formatRelative } from '../lib/format';
 import { loadJSON, saveJSON } from '../lib/persistence';
 
 const RENAMES_KEY = 'sessionRenames';
+const PINS_KEY = 'sessionPins';
+
+function loadPins(): Set<string> {
+  return new Set(loadJSON<string[]>(PINS_KEY, []));
+}
+
+function savePins(pins: Set<string>): void {
+  saveJSON(PINS_KEY, Array.from(pins));
+  window.dispatchEvent(new CustomEvent('agentview:pins-changed'));
+}
+
+// Highlight matches of `query` inside `text` by wrapping them with
+// <mark class="hl">. Case-insensitive, plain substring search (no regex
+// metacharacters). Returns the original text when query is empty.
+function highlightMatch(text: string, query: string): React.ReactNode {
+  if (!query || !text) return text;
+  const lowerText = text.toLowerCase();
+  const lowerQ = query.toLowerCase();
+  const parts: React.ReactNode[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const hit = lowerText.indexOf(lowerQ, i);
+    if (hit === -1) {
+      parts.push(text.slice(i));
+      break;
+    }
+    if (hit > i) parts.push(text.slice(i, hit));
+    parts.push(
+      <mark key={`hl-${hit}`} className="hl">
+        {text.slice(hit, hit + query.length)}
+      </mark>
+    );
+    i = hit + query.length;
+  }
+  return parts;
+}
 
 interface SessionListProps {
   sessions: BgSession[];
@@ -93,8 +130,29 @@ export function SessionList({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; session: BgSession } | null>(null);
+  const [pins, setPins] = useState<Set<string>>(() => loadPins());
   const searchRef = useRef<HTMLInputElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Other windows / components fire agentview:pins-changed when they
+  // toggle a pin — keep our local copy in sync so the "고정" group stays
+  // accurate without a manual remount.
+  useEffect(() => {
+    const onChange = () => setPins(loadPins());
+    window.addEventListener('agentview:pins-changed', onChange);
+    return () => window.removeEventListener('agentview:pins-changed', onChange);
+  }, []);
+
+  const togglePin = useCallback((sessionId: string) => {
+    setPins((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      savePins(next);
+      return next;
+    });
+    setContextMenu(null);
+  }, []);
 
   // Ctrl/Cmd+K anywhere → focus session search.
   useEffect(() => {
@@ -147,20 +205,28 @@ export function SessionList({
     return list.sort((a, b) => b.updatedAt - a.updatedAt);
   }, [sessions, query, filter, renames]);
 
+  // Bucket sessions: pinned ones float to a separate "고정" group at the
+  // top, regardless of how recent they are; the rest fall back into
+  // today/yesterday/thisWeek/older.
+  const pinnedList = useMemo(
+    () => filtered.filter((s) => pins.has(s.sessionId)),
+    [filtered, pins]
+  );
   const grouped = useMemo(() => {
     const map: Record<GroupKey, BgSession[]> = { today: [], yesterday: [], thisWeek: [], older: [] };
     for (const s of filtered) {
+      if (pins.has(s.sessionId)) continue;
       map[groupOf(s.updatedAt, now)].push(s);
     }
     return map;
-  }, [filtered, now]);
+  }, [filtered, now, pins]);
 
-  // Flat order for keyboard navigation (matches the visible group order).
+  // Flat order for keyboard navigation: pinned first, then the time buckets.
   const flatOrder = useMemo(() => {
-    const out: BgSession[] = [];
+    const out: BgSession[] = [...pinnedList];
     for (const k of GROUP_ORDER) out.push(...grouped[k]);
     return out;
-  }, [grouped]);
+  }, [grouped, pinnedList]);
 
   const commitRename = useCallback(
     (sessionId: string) => {
@@ -232,6 +298,72 @@ export function SessionList({
       ? '일치하는 세션 없음'
       : '세션 없음 — 위 “+ 새 작업”으로 시작하세요';
 
+  const renderRow = (s: BgSession): React.ReactElement => {
+    const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
+    const preview = s.lastUserText || s.lastAssistantText || '';
+    const previewSlice = preview.length > 60 ? preview.slice(0, 60) + '…' : preview;
+    const isRenaming = renamingId === s.sessionId;
+    const isPinned = pins.has(s.sessionId);
+    return (
+      <div
+        key={s.sessionId}
+        className={`session-list-item ${s.sessionId === selectedId ? 'selected' : ''}`}
+        onClick={() => !isRenaming && onSelect(s)}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          startRename(s);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setContextMenu({ x: e.clientX, y: e.clientY, session: s });
+        }}
+        role="button"
+        tabIndex={-1}
+        title={s.cwd ? `${name}\n${s.cwd}` : name}
+      >
+        <span className={`session-list-dot ${dotClass(s)}`} />
+        <span className="session-list-item-body">
+          {isRenaming ? (
+            <input
+              autoFocus
+              type="text"
+              className="session-list-rename-input"
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onBlur={() => commitRename(s.sessionId)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitRename(s.sessionId);
+                } else if (e.key === 'Escape') {
+                  setRenamingId(null);
+                  setRenameDraft('');
+                }
+                e.stopPropagation();
+              }}
+              onClick={(e) => e.stopPropagation()}
+              aria-label="세션 이름 변경"
+            />
+          ) : (
+            <span className="session-list-name">
+              {isPinned && <span className="session-list-pin-icon" aria-hidden="true">★ </span>}
+              {highlightMatch(name, query)}
+            </span>
+          )}
+          <span className="session-list-sub">
+            <span className={`session-list-status ${dotClass(s)}`}>{statusLabel(s)}</span>
+            {previewSlice && (
+              <span className="session-list-preview" title={preview}>
+                · {highlightMatch(previewSlice, query)}
+              </span>
+            )}
+            <span className="session-list-time">{formatRelative(s.updatedAt, now)}</span>
+          </span>
+        </span>
+      </div>
+    );
+  };
+
   return (
     <div className="session-list" onKeyDown={onListKeyDown} ref={containerRef} tabIndex={0}>
       <div className="session-list-head">
@@ -298,72 +430,19 @@ export function SessionList({
         {flatOrder.length === 0 && (
           <div className="session-list-empty">{emptyText}</div>
         )}
+        {pinnedList.length > 0 && (
+          <div className="session-list-group">
+            <div className="session-list-group-header">★ 고정</div>
+            {pinnedList.map((s) => renderRow(s))}
+          </div>
+        )}
         {GROUP_ORDER.map((g) => {
           const items = grouped[g];
           if (items.length === 0) return null;
           return (
             <div key={g} className="session-list-group">
               <div className="session-list-group-header">{GROUP_LABELS[g]}</div>
-              {items.map((s) => {
-                const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
-                const preview = s.lastUserText || s.lastAssistantText || '';
-                const isRenaming = renamingId === s.sessionId;
-                return (
-                  <div
-                    key={s.sessionId}
-                    className={`session-list-item ${s.sessionId === selectedId ? 'selected' : ''}`}
-                    onClick={() => !isRenaming && onSelect(s)}
-                    onDoubleClick={(e) => {
-                      e.preventDefault();
-                      startRename(s);
-                    }}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      setContextMenu({ x: e.clientX, y: e.clientY, session: s });
-                    }}
-                    role="button"
-                    tabIndex={-1}
-                    title={s.cwd ? `${name}\n${s.cwd}` : name}
-                  >
-                    <span className={`session-list-dot ${dotClass(s)}`} />
-                    <span className="session-list-item-body">
-                      {isRenaming ? (
-                        <input
-                          autoFocus
-                          type="text"
-                          className="session-list-rename-input"
-                          value={renameDraft}
-                          onChange={(e) => setRenameDraft(e.target.value)}
-                          onBlur={() => commitRename(s.sessionId)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              commitRename(s.sessionId);
-                            } else if (e.key === 'Escape') {
-                              setRenamingId(null);
-                              setRenameDraft('');
-                            }
-                            e.stopPropagation();
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label="세션 이름 변경"
-                        />
-                      ) : (
-                        <span className="session-list-name">{name}</span>
-                      )}
-                      <span className="session-list-sub">
-                        <span className={`session-list-status ${dotClass(s)}`}>{statusLabel(s)}</span>
-                        {preview && (
-                          <span className="session-list-preview" title={preview}>
-                            · {preview.length > 60 ? preview.slice(0, 60) + '…' : preview}
-                          </span>
-                        )}
-                        <span className="session-list-time">{formatRelative(s.updatedAt, now)}</span>
-                      </span>
-                    </span>
-                  </div>
-                );
-              })}
+              {items.map((s) => renderRow(s))}
             </div>
           );
         })}
@@ -380,6 +459,13 @@ export function SessionList({
           }}
           role="menu"
         >
+          <button
+            type="button"
+            className="session-list-menu-item"
+            onClick={() => togglePin(contextMenu.session.sessionId)}
+          >
+            {pins.has(contextMenu.session.sessionId) ? '☆ 고정 해제' : '★ 상단 고정'}
+          </button>
           <button
             type="button"
             className="session-list-menu-item"
