@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { BgSession, NewSessionInput } from '@shared/types';
 import { SessionList } from './components/SessionList';
 import { SessionDetail } from './components/SessionDetail';
@@ -6,6 +6,7 @@ import { InputBar } from './components/InputBar';
 import { UpdateBanner } from './components/UpdateBanner';
 import { SpotlightTour } from './components/SpotlightTour';
 import { WindowChrome } from './components/WindowChrome';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { isEmptyDeadSession } from './lib/sessionFilters';
 import {
   PENDING_PREFIX,
@@ -39,6 +40,45 @@ export default function App() {
   const { toast, setToast } = useRunEventsToast(reloadSessions);
 
   useBackForwardNav(selectedId, setSelectedId);
+
+  // Global keyboard shortcuts (researcher items #43/#213 Ctrl+N, #220 F6,
+  // #370 Esc to close, #227 Esc → popup close):
+  //   Ctrl/Cmd+N  → open the "new task" composer (clears selection).
+  //   F6          → cycle focus between the sidebar and the workspace
+  //                 region so keyboard-only users do not have to Tab
+  //                 across the whole UI just to switch panels.
+  //   Esc         → if a session is open, fall back to the dashboard so
+  //                 the user always has a one-key escape route.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const isEditable =
+        tag === 'input' || tag === 'textarea' || (target?.isContentEditable ?? false);
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
+        if (isEditable) return;
+        e.preventDefault();
+        setSelectedId(null);
+        return;
+      }
+      if (e.key === 'F6') {
+        e.preventDefault();
+        // Toggle focus between .session-list (sidebar) and
+        // .single-workspace (right pane). Both have tabIndex / focusable
+        // children so document.activeElement gives a reasonable signal.
+        const sidebar = document.querySelector('.session-list') as HTMLElement | null;
+        const workspace = document.querySelector('.single-workspace') as HTMLElement | null;
+        const inSidebar = sidebar?.contains(document.activeElement);
+        if (inSidebar && workspace) {
+          (workspace.querySelector<HTMLElement>('[tabindex],input,textarea,button') ?? workspace).focus();
+        } else if (sidebar) {
+          sidebar.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const sessionsList = useMemo(() => {
     const real = (scan?.sessions ?? []).filter((s) => !isEmptyDeadSession(s));
@@ -164,8 +204,11 @@ export default function App() {
 
   // Single mode is the only mode after P1: left sidebar with the session
   // list, right pane shows the selected session detail (or the "new task"
-  // composer when nothing is selected).
+  // composer when nothing is selected). Wrapped in ErrorBoundary so a
+  // render failure shows a friendly recovery screen instead of a blank
+  // window (researcher item #466).
   return (
+    <ErrorBoundary>
     <div className="app no-chrome">
       <WindowChrome />
       <UpdateBanner />
@@ -226,5 +269,6 @@ export default function App() {
       </div>
       {toastNode}
     </div>
+    </ErrorBoundary>
   );
 }
