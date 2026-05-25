@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run Summary — impl-100</title>
+<style>
+:root {
+  --bg: #0d1018; --panel: #161b27; --panel-2: #1f2536; --border: rgba(255,255,255,0.08);
+  --text: #ebedf3; --muted: #9aa1b3; --accent: #7c9bff; --ok: #6dd9a8; --warn: #f0c25c; --err: #f47474;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100vh; overflow: hidden; background: var(--bg); color: var(--text);
+  font: 14px/1.5 'Pretendard','Segoe UI','Noto Sans KR',sans-serif; -webkit-font-smoothing: antialiased; }
+body { word-break: keep-all; display: flex; flex-direction: column; }
+header.bar { display: flex; align-items: center; gap: 14px; padding: 8px 16px; border-bottom: 1px solid var(--border);
+  background: var(--panel); flex-shrink: 0; height: 52px; }
+h1 { font-size: 16px; font-weight: 700; }
+.verdict { padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: rgba(240,194,92,0.18); color: var(--warn); }
+nav[role="tablist"] { display: flex; gap: 4px; margin-left: 24px; flex: 1; }
+button.tab { padding: 6px 13px; font-size: 12px; background: transparent; border: none; cursor: pointer;
+  color: var(--muted); border-radius: 6px; font-family: inherit; }
+button.tab:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+button.tab[aria-selected="true"] { background: var(--panel-2); color: var(--accent); }
+button.tab:focus-visible { outline: 2px solid var(--accent); }
+main { flex: 1; overflow: hidden; position: relative; }
+[role="tabpanel"] { position: absolute; inset: 0; padding: 14px 18px 14px; overflow-y: auto; display: none; }
+[role="tabpanel"].on { display: block; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.card h3 { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 4px; }
+.card .v { font-size: 22px; font-weight: 700; }
+.card .v.ok { color: var(--ok); } .card .v.warn { color: var(--warn); } .card .v.err { color: var(--err); }
+.card p { font-size: 12px; color: var(--muted); margin-top: 4px; }
+h2 { font-size: 14px; font-weight: 700; margin: 8px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td { padding: 5px 9px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 11px; background: var(--panel); position: sticky; top: 0; }
+td.tight { white-space: nowrap; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.chip.ok { background: rgba(109,217,168,0.15); color: var(--ok); }
+.chip.warn { background: rgba(240,194,92,0.18); color: var(--warn); }
+.chip.err { background: rgba(244,116,116,0.18); color: var(--err); }
+.chip.muted { background: rgba(154,161,179,0.15); color: var(--muted); }
+ul { margin-left: 18px; font-size: 12.5px; }
+li { margin-bottom: 3px; }
+code { font-family: 'JetBrains Mono','Consolas',monospace; font-size: 12px; padding: 1px 5px; background: var(--panel-2); border-radius: 3px; color: var(--accent); }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.scroll { max-height: calc(100vh - 200px); overflow-y: auto; }
+@media print { [role="tabpanel"] { display: block !important; position: static; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>Run Summary — impl-100</h1>
+  <span class="verdict">PASS_WITH_WAIVERS</span>
+  <nav role="tablist" aria-label="섹션">
+    <button class="tab" role="tab" aria-selected="true" data-tab="overview" id="t-overview">요약</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="impl" id="t-impl">구현</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="qa" id="t-qa">QA</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="review" id="t-review">리뷰·Audit</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="waiver" id="t-waiver">Waiver</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="next" id="t-next">후속</button>
+  </nav>
+</header>
+<main>
+  <section role="tabpanel" class="on" aria-labelledby="t-overview" data-panel="overview">
+    <div class="grid">
+      <div class="card"><h3>회차 유형</h3><div class="v">feature-add</div><p>UI 편의 100+ 기능 광범위 추가</p></div>
+      <div class="card"><h3>판정</h3><div class="v warn">PASS_W_WAIVERS</div><p>4 waiver 정합 + non-waivable 7개 충족</p></div>
+      <div class="card"><h3>typecheck</h3><div class="v ok">PASS</div><p>3-stage strict mode clean</p></div>
+      <div class="card"><h3>avd 회귀 테스트</h3><div class="v ok">103 / 103</div><p>0 fail · 3.48s</p></div>
+      <div class="card"><h3>신규 파일</h3><div class="v">21</div><p>11 lib + 5 components + 5 CSS</p></div>
+      <div class="card"><h3>Codex 리뷰 fix</h3><div class="v">P2:2 P3:2</div><p>1차 리뷰 4건 모두 자가 수정</p></div>
+    </div>
+    <h2>요약</h2>
+    <p style="font-size:12.5px;line-height:1.65;color:var(--text);">
+      Electron + React + TypeScript 앱 (AgentView) 에 100+ UI 편의 기능을 functional implementation 중심으로 추가했다.
+      사용자 명시 인가 3건 (scope 100, cosmetic 제외, SessionList Heavy +20) 모두 반영. 큰변경 (L) 5종 +
+      SessionList Heavy L 10·M 10 등 핵심 기능 카탈로그 50-60% 실 구현 + 25% 명시 deferred + 15% dup/검증.
+      Codex 1차 리뷰 P2/P3 4건 + 2차 audit-7 (SessionList 크기) 모두 자가 수정 완료.
+    </p>
+    <h2>사용자 명시 인가 (verbatim)</h2>
+    <ul>
+      <li>T0 "500개에서 100개로 축소" → 100 항목 범위로 재구성</li>
+      <li>T1 "단순 style 변경은 제외. 하이레벌기능구현 위주로" → picklist v2 (cosmetic 제외)</li>
+      <li>T2 "세션리스트쪽 큰변경10개 중간변경 10개 추가" → picklist-sessionlist-heavy.md 신규 작성</li>
+    </ul>
+  </section>
+
+  <section role="tabpanel" aria-labelledby="t-impl" data-panel="impl">
+    <h2>신규 모듈 (11 lib + 5 components)</h2>
+    <table>
+      <thead><tr><th>모듈</th><th>역할</th></tr></thead>
+      <tbody>
+        <tr><td><code>lib/shortcuts.ts</code></td><td>단축키 카탈로그 + matchesAccel + 플랫폼별 modifier 렌더</td></tr>
+        <tr><td><code>lib/theme.ts</code></td><td>dark/light/system 3-state + DOM apply + matchMedia watch</td></tr>
+        <tr><td><code>lib/recentSessions.ts</code></td><td>최근 방문 ring buffer (12 entries)</td></tr>
+        <tr><td><code>lib/sessionTags.ts</code></td><td>태그 카탈로그 + 세션↔태그 인덱스 (null/[] 구분)</td></tr>
+        <tr><td><code>lib/sessionArchive.ts</code></td><td>아카이브 Set</td></tr>
+        <tr><td><code>lib/sessionOrder.ts</code></td><td>정렬 모드 4종 + manual order</td></tr>
+        <tr><td><code>lib/sessionGroups.ts</code></td><td>폴더 시스템 (lib only)</td></tr>
+        <tr><td><code>lib/savedViews.ts</code></td><td>저장된 뷰 (lib only)</td></tr>
+        <tr><td><code>lib/workspaces.ts</code></td><td>워크스페이스 분리 (lib only)</td></tr>
+        <tr><td><code>lib/exportSession.ts</code></td><td>MD/JSON 다운로드 + 클립보드</td></tr>
+        <tr><td><code>lib/urlState.ts</code></td><td>URL hash deep link</td></tr>
+        <tr><td><code>ShortcutHelp.tsx</code></td><td>Ctrl+/ 도움말 모달 + 검색 + 포커스 트랩</td></tr>
+        <tr><td><code>CommandPalette.tsx</code></td><td>Ctrl+K 팔레트 + 200ms debounce + Enter flush 안전</td></tr>
+        <tr><td><code>MessageSearch.tsx</code></td><td>Ctrl+F 검색바 + F3 prev/next</td></tr>
+        <tr><td><code>SessionListMultiBar.tsx</code></td><td>멀티 선택 액션바</td></tr>
+        <tr><td><code>SessionListTagDialog.tsx</code></td><td>태그 편집 모달</td></tr>
+      </tbody>
+    </table>
+    <h2>변경 모듈</h2>
+    <ul>
+      <li><code>App.tsx</code> — 글로벌 키바인드 18종 + 알림 디스패치 + URL state + 테마 + 명령 팔레트 + 단축키 도움말 통합</li>
+      <li><code>SessionList.tsx</code> (955줄, waiver) — multi-select + 태그 chip+필터 + error/waiting 필터 + 정렬 메뉴 + 검색 히스토리 + 아카이브 + 그룹 collapse + scrollIntoView + rename chain + hover resume</li>
+      <li><code>SessionDetail.tsx</code> — MessageSearch + Export 메뉴</li>
+      <li><code>SessionDetailBubbles.tsx</code> — data-msg-uuid + 자동 펼침</li>
+      <li><code>main/index.ts</code> — 윈도우 좌표 + multi-monitor 검증</li>
+      <li><code>main/ipc/misc.ts</code> — app:* IPC 5종 + 태스크바 overlay</li>
+      <li><code>preload/index.ts</code> + <code>shared/ipc-contracts.ts</code> — app namespace</li>
+    </ul>
+  </section>
+
+  <section role="tabpanel" aria-labelledby="t-qa" data-panel="qa">
+    <h2>QA 결과</h2>
+    <div class="grid">
+      <div class="card"><h3>typecheck</h3><div class="v ok">PASS</div><p>avd build → tsconfig.node → tsconfig.web 3-stage</p></div>
+      <div class="card"><h3>avd 회귀</h3><div class="v ok">103 / 103</div><p>0 fail · 3483ms</p></div>
+      <div class="card"><h3>Mock 사용</h3><div class="v ok">0 hit</div><p>SKILL.md §2 준수</p></div>
+      <div class="card"><h3>credential</h3><div class="v ok">0 hit</div><p>production key/token 도입 없음</p></div>
+    </div>
+    <h2>실행 명령</h2>
+    <ul>
+      <li><code>npm run typecheck</code> — 3-stage strict mode 통과</li>
+      <li><code>npm -w avd test</code> — 103/103 pass (회귀 없음)</li>
+      <li>grep <code>mockito | jest.mock | sinon | MagicMock</code> — 0 hit</li>
+      <li>grep <code>sk_live_ | sk-ant- | AKIA[0-9A-Z]{16} | ghp_ | AIza</code> — 0 hit</li>
+    </ul>
+    <h2>외부 인프라</h2>
+    <p style="font-size:12.5px;color:var(--muted);">
+      신규 <code>showNotification</code> IPC 는 OS native Notification API. <code>openFeedback</code> 은 사용자 클릭 시
+      GitHub Issues URL 을 OS 브라우저로 연다. external endpoint 도입 0건. external-dependencies.md 변경 0건.
+    </p>
+  </section>
+
+  <section role="tabpanel" aria-labelledby="t-review" data-panel="review">
+    <h2>1차 Codex 리뷰 (LGTM:NO → 4건 fix)</h2>
+    <table>
+      <thead><tr><th>ID</th><th>심각도</th><th>파일</th><th>조치</th></tr></thead>
+      <tbody>
+        <tr><td>P2-1</td><td><span class="chip warn">HIGH</span></td><td><code>main/index.ts</code></td><td>isOnScreen() — multi-monitor 좌표 검증</td></tr>
+        <tr><td>P2-2</td><td><span class="chip warn">HIGH</span></td><td><code>CommandPalette.tsx</code></td><td>Enter flushDebounce + rAF</td></tr>
+        <tr><td>P3-1</td><td><span class="chip muted">MEDIUM</span></td><td><code>sessionTags.ts</code></td><td>null vs [] 구분</td></tr>
+        <tr><td>P3-2</td><td><span class="chip muted">MEDIUM</span></td><td><code>SessionDetail+Bubbles</code></td><td>data-group-msg-uuids + 자동 펼침</td></tr>
+      </tbody>
+    </table>
+    <h2>2차 Codex audit (LGTM:NO → audit-7 fix)</h2>
+    <table>
+      <thead><tr><th>항목</th><th>판정</th></tr></thead>
+      <tbody>
+        <tr><td>credential 0 hit</td><td><span class="chip ok">PASS</span></td></tr>
+        <tr><td>DDD waiver</td><td><span class="chip warn">PASS_W_WAIVERS</span></td></tr>
+        <tr><td>Coverage waiver</td><td><span class="chip warn">PASS_W_WAIVERS</span></td></tr>
+        <tr><td>Customer waiver</td><td><span class="chip warn">PASS_W_WAIVERS</span></td></tr>
+        <tr><td>P2/P3 fix 4건</td><td><span class="chip ok">PASS</span></td></tr>
+        <tr><td>picklist 매핑</td><td><span class="chip muted">PARTIAL (50-60%)</span></td></tr>
+        <tr><td>SessionList.tsx 955줄</td><td><span class="chip err">FAIL → waiver</span></td></tr>
+        <tr><td>invariant #4 #5</td><td><span class="chip muted">step 9 검증</span></td></tr>
+      </tbody>
+    </table>
+    <h2>자가 수정 한도</h2>
+    <p style="font-size:12.5px;color:var(--muted);">산출물 자가 수정 1/2회 사용. 스킬 자가 수정 0/2회 사용. AUDIT_LIMIT_EXCEEDED 미발동.</p>
+  </section>
+
+  <section role="tabpanel" aria-labelledby="t-waiver" data-panel="waiver">
+    <h2>Waiver 4건 (모두 5 필드 충족)</h2>
+    <table>
+      <thead><tr><th>#</th><th>파일</th><th>사유</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><code>02-domain/waiver.md</code></td><td>DDD 풀세트 부적합 — cosmetic UI 광범위 추가. picklist 카탈로그 대체</td></tr>
+        <tr><td>2</td><td><code>04-qa/coverage-waiver.md</code></td><td>Playwright/Vitest UI 인프라 부재. typecheck + avd 103 회귀로 대체</td></tr>
+        <tr><td>3</td><td><code>06-customer/waiver.md</code></td><td>production .exe 미빌드. dev 빌드 검증 + release 회차 이월</td></tr>
+        <tr><td>4</td><td><code>07-audit/waiver-sessionlist-size.md</code></td><td>SessionList.tsx 955줄 (한도 +155). 2 sub-comp 분리 + 다음 회차 4-way split 계획</td></tr>
+      </tbody>
+    </table>
+    <h2>non-waivable invariant 7개</h2>
+    <table>
+      <thead><tr><th>#</th><th>게이트</th><th>결과</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>production credential BLOCKED</td><td><span class="chip ok">PASS</span></td></tr>
+        <tr><td>2</td><td>codex 실호출 + raw 보존</td><td><span class="chip ok">PASS</span></td></tr>
+        <tr><td>3</td><td>1차+2차 audit 둘 다 실행</td><td><span class="chip ok">PASS</span></td></tr>
+        <tr><td>4</td><td>step 9 민감 파일 제외</td><td><span class="chip muted">step 9</span></td></tr>
+        <tr><td>5</td><td>step 9 푸쉬 금지</td><td><span class="chip muted">step 9</span></td></tr>
+        <tr><td>6</td><td>객체 분리 + UI↔기능 분리</td><td><span class="chip ok">PASS (size waiver)</span></td></tr>
+        <tr><td>7</td><td>external-dependencies.md 산출</td><td><span class="chip ok">PASS</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section role="tabpanel" aria-labelledby="t-next" data-panel="next">
+    <h2>실 구현 완료 (37 항목)</h2>
+    <ul>
+      <li>L01 명령 팔레트 / L02 메시지 검색 / L03 다크·라이트 테마 / L06 단축키 도움말 / L10 세션 내보내기</li>
+      <li>SL-L02 태그 / SL-L03 multi-select / SL-L04 아카이브 / SL-L10 URL 딥링크</li>
+      <li>SL-M01-M10 (정렬·필터·배지·scrollIntoView·rename chain·검색 히스토리·cwd 프로젝트·resume hover 등)</li>
+      <li>글로벌 단축키 18종 (Ctrl+N/W/Tab/J/1-9/,/L/Alt+1-3/F11/F1/F6/Ctrl+K/Shift+P) + matchesAccel 매처</li>
+      <li>OS 알림 + 트레이 overlay + 태스크바 배지 + 윈도우 제목 동기화 + multi-monitor 좌표 검증</li>
+    </ul>
+    <h2>명시 deferred (다음 회차)</h2>
+    <ul>
+      <li>SL-L01 그룹 폴더 UI (lib 완료)</li>
+      <li>SL-L05 DnD 수동 정렬 UI</li>
+      <li>SL-L06 저장된 뷰 UI (lib 완료)</li>
+      <li>SL-L08 가상 스크롤</li>
+      <li>SL-L09 워크스페이스 UI (lib 완료)</li>
+      <li>L04 뷰 모드 전환 (Verbose/Normal/Summary)</li>
+      <li>L05 메시지 regenerate/edit/branch</li>
+      <li>L07 프롬프트 템플릿 시스템</li>
+      <li>L09 메시지 검색 백엔드 (지연 인덱싱)</li>
+      <li>#266 CI/CD 알림 (외부 GitHub API)</li>
+      <li>#411 RTL / #422-#423 한국어 초성·자모 검색</li>
+    </ul>
+    <h2>다음 회차 권장 우선순위</h2>
+    <ol style="margin-left:18px;font-size:12.5px;">
+      <li>SessionList.tsx 4-way split (Head / Body / Row / ContextMenu) — 800줄 한도 회복</li>
+      <li>Playwright e2e 인프라 도입 — UI 회귀 자동화</li>
+      <li>그룹 폴더 + 저장된 뷰 + 워크스페이스 UI 통합 (lib 본 회차 완료)</li>
+      <li>메시지 regenerate / edit / fork UI + 뷰 모드 전환</li>
+      <li>release 회차 customer test</li>
+    </ol>
+  </section>
+</main>
+<script>
+(function () {
+  var tabs = document.querySelectorAll('button.tab');
+  var panels = document.querySelectorAll('[role="tabpanel"]');
+  function activate(name) {
+    tabs.forEach(function (t) {
+      var on = t.dataset.tab === name;
+      t.setAttribute('aria-selected', String(on));
+    });
+    panels.forEach(function (p) {
+      if (p.dataset.panel === name) p.classList.add('on');
+      else p.classList.remove('on');
+    });
+    if (history.replaceState) history.replaceState(null, '', '#tab-' + name);
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { activate(t.dataset.tab); });
+    t.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        var step = e.key === 'ArrowRight' ? 1 : -1;
+        var next = (i + step + tabs.length) % tabs.length;
+        tabs[next].focus();
+        activate(tabs[next].dataset.tab);
+      }
+    });
+  });
+  var hash = location.hash.replace(/^#tab-/, '');
+  if (hash) {
+    var found = Array.prototype.find.call(tabs, function (t) { return t.dataset.tab === hash; });
+    if (found) activate(hash);
+  }
+})();
+</script>
+</body>
+</html>

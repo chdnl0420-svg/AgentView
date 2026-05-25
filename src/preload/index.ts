@@ -117,7 +117,19 @@ const api: AgentViewApi = {
   options: {
     getAutostart: () => ipcRenderer.invoke(IPC.OptionsGetAutostart),
     setAutostart: (on) => ipcRenderer.invoke(IPC.OptionsSetAutostart, on)
+  },
+  app: {
+    toggleFullscreen: () => ipcRenderer.invoke(IPC.AppToggleFullscreen),
+    setSessionStats: (stats) => ipcRenderer.invoke(IPC.AppSetSessionStats, stats),
+    openDevTools: () => ipcRenderer.invoke(IPC.AppOpenDevTools),
+    openFeedback: () => ipcRenderer.invoke(IPC.AppOpenFeedback),
+    showNotification: (input) => ipcRenderer.invoke(IPC.AppShowNotification, input)
   }
 };
+
+// Main → renderer notification click event (forwarded via `notification:click`).
+ipcRenderer.on('notification:click', (_e, payload: { sessionId?: string }) => {
+  window.dispatchEvent(new CustomEvent('agentview:notification-click', { detail: payload }));
+});
 
 contextBridge.exposeInMainWorld('av', api);

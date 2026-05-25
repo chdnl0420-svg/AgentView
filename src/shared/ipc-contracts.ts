@@ -72,7 +72,14 @@ export const IPC = {
   WindowClose: 'window:close',
   WindowIsMaximized: 'window:isMaximized',
   OptionsGetAutostart: 'options:getAutostart',
-  OptionsSetAutostart: 'options:setAutostart'
+  OptionsSetAutostart: 'options:setAutostart',
+
+  // ----- impl-100 batch A: window/app convenience IPCs -----
+  AppToggleFullscreen: 'app:toggleFullscreen',
+  AppSetSessionStats: 'app:setSessionStats',
+  AppOpenDevTools: 'app:openDevTools',
+  AppOpenFeedback: 'app:openFeedback',
+  AppShowNotification: 'app:showNotification'
 } as const;
 
 export const EVT = {
@@ -201,6 +208,27 @@ export interface AgentViewApi {
   options: {
     getAutostart(): Promise<boolean>;
     setAutostart(on: boolean): Promise<{ ok: boolean }>;
+  };
+  app: {
+    /** Toggle fullscreen on the main window. Returns the new fullscreen state. */
+    toggleFullscreen(): Promise<boolean>;
+    /** Tell main about the current session counts so it can update the taskbar overlay / tray badge / tooltip. */
+    setSessionStats(stats: { active: number; total: number }): Promise<void>;
+    /** Open Chromium DevTools attached to the current window. */
+    openDevTools(): Promise<void>;
+    /** Open the project's feedback page in the OS browser. */
+    openFeedback(): Promise<void>;
+    /**
+     * Show an OS-native notification. When the user clicks it, the configured
+     * sessionId (if any) is dispatched to the renderer through the
+     * `agentview:notification-click` window event with detail = { sessionId }.
+     */
+    showNotification(input: {
+      title: string;
+      body: string;
+      sessionId?: string;
+      kind?: 'info' | 'success' | 'error';
+    }): Promise<void>;
   };
 }
 

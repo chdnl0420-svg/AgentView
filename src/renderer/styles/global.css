@@ -62,3 +62,8 @@
 @import './parts/icon-button.css';
 @import './parts/single-mode.css';
 @import './parts/a11y.css';
+@import './parts/shortcut-help.css';
+@import './parts/command-palette.css';
+@import './parts/message-search.css';
+@import './parts/light-theme.css';
+@import './parts/session-list-extras.css';

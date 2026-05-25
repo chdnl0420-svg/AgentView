@@ -3,7 +3,7 @@
 // / meta) plus the tool-group collapsing logic. SessionDetail proper now
 // only orchestrates state and renders headers + the composer.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { ConversationMessage } from '@shared/types';
 import { renderMarkdown } from '../lib/markdown';
 import {
@@ -81,7 +81,7 @@ export function MessageBubble({
   }
   if (m.kind === 'meta') {
     return (
-      <div className="msg meta">
+      <div className="msg meta" data-msg-uuid={m.uuid}>
         <div className="avatar">i</div>
         <div className={`bubble ${fresh ? 'fresh' : ''}`}>
           <div className="content">{m.text}</div>
@@ -97,7 +97,7 @@ export function MessageBubble({
 
   const html = role === 'assistant' ? renderMarkdown(m.text) : null;
   return (
-    <div className={`msg ${role}`}>
+    <div className={`msg ${role}`} data-msg-uuid={m.uuid}>
       <div className="avatar">{avatar}</div>
       <div className={`bubble ${fresh ? 'fresh' : ''}`}>
         <div className="role-line">{roleLabel(role)}</div>
@@ -116,7 +116,7 @@ function UserBubble({ m, fresh }: { m: ConversationMessage; fresh: boolean }) {
   const cleaned = cleanUserMessage(m.text);
   if (isEmptyUserMessage(cleaned)) return null;
   return (
-    <div className="msg user">
+    <div className="msg user" data-msg-uuid={m.uuid}>
       <div className="avatar">나</div>
       <div className={`bubble ${fresh ? 'fresh' : ''}`}>
         <div className="role-line">사용자</div>
@@ -503,8 +503,27 @@ function ToolGroup({
   // Force-expand if there's an unanswered AskUserQuestion — the user can't
   // answer if the group is collapsed.
   const effectiveExpanded = expanded || !!askUnanswered;
+  const firstItem = items[0];
+  // When the in-session search target lands inside a collapsed tool group,
+  // auto-expand so the user can actually see the match (codex review P3).
+  useEffect(() => {
+    if (expanded) return;
+    const onSearchTarget = (e: Event) => {
+      const detail = (e as CustomEvent<{ uuid: string }>).detail;
+      if (!detail?.uuid) return;
+      if (items.some((m) => m.uuid === detail.uuid)) {
+        setExpanded(true);
+      }
+    };
+    window.addEventListener('agentview:search-target', onSearchTarget as EventListener);
+    return () => window.removeEventListener('agentview:search-target', onSearchTarget as EventListener);
+  }, [expanded, items]);
   return (
-    <div className={`msg tool tool-group ${fresh ? 'fresh-group' : ''}`}>
+    <div
+      className={`msg tool tool-group ${fresh ? 'fresh-group' : ''}`}
+      data-msg-uuid={firstItem?.uuid}
+      data-group-msg-uuids={items.map((m) => m.uuid).join(',')}
+    >
       <div className="avatar">⚙</div>
       <div className="bubble tool-bubble tool-group-bubble">
         <button

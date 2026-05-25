@@ -7,6 +7,8 @@ import { UpdateBanner } from './components/UpdateBanner';
 import { SpotlightTour } from './components/SpotlightTour';
 import { WindowChrome } from './components/WindowChrome';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ShortcutHelp } from './components/ShortcutHelp';
+import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { isEmptyDeadSession } from './lib/sessionFilters';
 import {
   PENDING_PREFIX,
@@ -24,8 +26,19 @@ import { useClaudeStatus } from './state/useClaudeStatus';
 import { useClock } from './state/useClock';
 import { useBackForwardNav } from './state/useBackForwardNav';
 import { useRunEventsToast } from './state/useRunEventsToast';
+import { matchesAccel } from './lib/shortcuts';
+import { applyTheme, loadTheme, nextTheme, setTheme, watchSystemTheme, resolveTheme } from './lib/theme';
+import { pushRecent, previousRecent } from './lib/recentSessions';
+import { readUrlState, writeUrlState } from './lib/urlState';
 
 const DEFAULT_CWD = 'D:\\Project\\VisualAgents';
+
+function isEditableTarget(el: EventTarget | null): boolean {
+  const t = el as HTMLElement | null;
+  if (!t) return false;
+  const tag = t.tagName?.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || (t.isContentEditable ?? false);
+}
 
 export default function App() {
   const { scan, loading, flash, reloadSessions } = useSessionScan();
@@ -36,72 +49,87 @@ export default function App() {
   const { renames, refresh: refreshRenames, activeBackend } = useRenames();
   const claudeStatus = useClaudeStatus();
   const now = useClock();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(() => readUrlState().sessionId);
   const { toast, setToast } = useRunEventsToast(reloadSessions);
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
+  const [theme, setThemeState] = useState(() => loadTheme());
 
   useBackForwardNav(selectedId, setSelectedId);
 
-  // Global keyboard shortcuts (researcher items #43/#213 Ctrl+N, #220 F6,
-  // #370 Esc to close, #227 Esc → popup close):
-  //   Ctrl/Cmd+N  → open the "new task" composer (clears selection).
-  //   F6          → cycle focus between the sidebar and the workspace
-  //                 region so keyboard-only users do not have to Tab
-  //                 across the whole UI just to switch panels.
-  //   Esc         → if a session is open, fall back to the dashboard so
-  //                 the user always has a one-key escape route.
+  // Apply persisted theme + react to system theme changes when in "system" mode.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      const isEditable =
-        tag === 'input' || tag === 'textarea' || (target?.isContentEditable ?? false);
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
-        if (isEditable) return;
-        e.preventDefault();
-        setSelectedId(null);
-        return;
-      }
-      if (e.key === 'F6') {
-        e.preventDefault();
-        // Toggle focus between .session-list (sidebar) and
-        // .single-workspace (right pane). Both have tabIndex / focusable
-        // children so document.activeElement gives a reasonable signal.
-        const sidebar = document.querySelector('.session-list') as HTMLElement | null;
-        const workspace = document.querySelector('.single-workspace') as HTMLElement | null;
-        const inSidebar = sidebar?.contains(document.activeElement);
-        if (inSidebar && workspace) {
-          (workspace.querySelector<HTMLElement>('[tabindex],input,textarea,button') ?? workspace).focus();
-        } else if (sidebar) {
-          sidebar.focus();
-        }
-      }
+    applyTheme(loadTheme());
+    const teardown = watchSystemTheme();
+    const onThemeChange = (e: Event) => {
+      const detail = (e as CustomEvent<typeof theme>).detail;
+      if (detail) setThemeState(detail);
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('agentview:theme-changed', onThemeChange as EventListener);
+    return () => {
+      teardown();
+      window.removeEventListener('agentview:theme-changed', onThemeChange as EventListener);
+    };
+  }, []);
+
+  // Push the active session into the recent-visits ring buffer so Ctrl+J and
+  // the command palette can rank by recency. Also mirror the selected ID
+  // into the URL hash so deep links like `#?id=<sid>` open the right
+  // session on reload (researcher item #196).
+  useEffect(() => {
+    if (selectedId) pushRecent(selectedId);
+    const cur = readUrlState();
+    writeUrlState({ ...cur, sessionId: selectedId });
+  }, [selectedId]);
+
+  // OS notifications: surface session completions / crashes so the user
+  // doesn't have to camp on the window. Clicking the notification focuses
+  // the app + jumps to that session (researcher items #253 / #254 / #255).
+  useEffect(() => {
+    const off = window.av.sessions.onRunEvent((evt) => {
+      if (evt.type === 'exit') {
+        const ok = evt.exitCode === 0 || evt.exitCode === null;
+        const session = (scan?.sessions ?? []).find((s) => s.sessionId === evt.sessionId);
+        const name = session
+          ? renames[evt.sessionId] || session.name || session.agent || evt.sessionId.slice(0, 8)
+          : evt.sessionId.slice(0, 8);
+        void window.av.app?.showNotification?.({
+          title: ok ? '세션 완료' : '세션 종료 (오류)',
+          body: ok
+            ? `${name} — 작업이 완료되었습니다.`
+            : `${name} — 종료 코드 ${evt.exitCode ?? '?'}`,
+          sessionId: evt.sessionId,
+          kind: ok ? 'success' : 'error'
+        }).catch(() => undefined);
+      }
+    });
+    return off;
+  }, [scan, renames]);
+
+  // When main forwards a notification click, focus the originating session.
+  useEffect(() => {
+    const onClick = (e: Event) => {
+      const detail = (e as CustomEvent<{ sessionId?: string }>).detail;
+      if (detail?.sessionId) setSelectedId(detail.sessionId);
+    };
+    window.addEventListener('agentview:notification-click', onClick as EventListener);
+    return () => window.removeEventListener('agentview:notification-click', onClick as EventListener);
   }, []);
 
   const sessionsList = useMemo(() => {
     const real = (scan?.sessions ?? []).filter((s) => !isEmptyDeadSession(s));
     if (pending.length === 0) return real;
     const realIds = new Set(real.map((s) => s.sessionId));
-    // Hide a placeholder once the daemon-registered card with the same
-    // sessionId has actually landed in the scan — that's the seamless handoff.
     const placeholders = pending
       .filter((p) => !(p.realSessionId && realIds.has(p.realSessionId)))
       .map(pendingToBgSession);
     return [...placeholders, ...real];
   }, [scan, pending]);
 
-  // Look up the selected session in the raw scan (not the filtered grid)
-  // so that brand-new sessions can show up in the detail view even before
-  // the next sessions watcher tick pulls them into the visible filter.
   const selected = useMemo<BgSession | null>(() => {
     if (!selectedId) return null;
     const hit = (scan?.sessions ?? []).find((s) => s.sessionId === selectedId);
     if (hit) return hit;
-    // Placeholder while the sessions watcher catches up with a freshly
-    // spawned agent. Lets SessionDetail mount immediately instead of
-    // bouncing back to the grid for the first second after "새 작업 시작".
     return {
       sessionId: selectedId,
       pid: 0,
@@ -118,12 +146,268 @@ export default function App() {
     };
   }, [scan, selectedId]);
 
+  // Sync the OS window title with the running-session count + selected name
+  // so the OS task switcher / taskbar tooltip shows useful context. #263.
+  useEffect(() => {
+    const activeCount = sessionsList.filter((s) => s.alive).length;
+    const name = selected
+      ? renames[selected.sessionId] || selected.name || selected.agent || selected.sessionId.slice(0, 8)
+      : null;
+    const baseTitle = 'AgentView';
+    const parts = [baseTitle];
+    if (activeCount > 0) parts.push(`(${activeCount} 실행 중)`);
+    if (name) parts.push(`· ${name}`);
+    document.title = parts.join(' ');
+    // Also broadcast the running-session count to main so it can update the
+    // taskbar overlay icon / tray badge.
+    window.av.app?.setSessionStats?.({ active: activeCount, total: sessionsList.length }).catch(() => undefined);
+  }, [sessionsList, selected, renames]);
+
+  // Jump to a specific session by ID — used by command palette, Ctrl+1..9, etc.
+  const jumpToSession = useCallback(
+    (id: string) => {
+      const exists = sessionsList.find((s) => s.sessionId === id);
+      if (!exists) return;
+      setSelectedId(id);
+    },
+    [sessionsList]
+  );
+
+  // Cycle through sessions in the sidebar order. step = +1 for next, -1 for prev.
+  const cycleSession = useCallback(
+    (step: 1 | -1) => {
+      const visible = sessionsList.filter((s) => !isEmptyDeadSession(s));
+      if (visible.length === 0) return;
+      const idx = selectedId ? visible.findIndex((s) => s.sessionId === selectedId) : -1;
+      const nextIdx = idx < 0 ? 0 : (idx + step + visible.length) % visible.length;
+      const next = visible[nextIdx];
+      if (next) setSelectedId(next.sessionId);
+    },
+    [sessionsList, selectedId]
+  );
+
+  // Toggle to the previously-active session (Ctrl+J).
+  const togglePrevious = useCallback(() => {
+    const prev = previousRecent(selectedId);
+    if (prev && prev !== selectedId) setSelectedId(prev);
+  }, [selectedId]);
+
+  // Global shortcuts (researcher items #43/#213 #220 #370 #227 + new items
+  // #209 #210 #211 #212 #214 #221 #250 #145 #228-230 #206 #23 #164 #226).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const editable = isEditableTarget(e.target);
+      const inMatchableContext = (allowEditable: boolean) => allowEditable || !editable;
+
+      // Help panel: F1 or Ctrl+/ → toggle (always wins, even inside editable).
+      if (e.key === 'F1' || (matchesAccel(e, 'Ctrl+/') && !editable)) {
+        e.preventDefault();
+        setShortcutHelpOpen((v) => !v);
+        return;
+      }
+      // Command palette: Ctrl+K or Ctrl+Shift+P. Ctrl+K is allowed even inside
+      // editable targets (input/textarea) because that's where users most
+      // often want to summon the palette.
+      if (matchesAccel(e, 'Ctrl+K') && inMatchableContext(true)) {
+        e.preventDefault();
+        setCmdPaletteOpen((v) => !v);
+        return;
+      }
+      if (matchesAccel(e, 'Ctrl+Shift+P') && inMatchableContext(true)) {
+        e.preventDefault();
+        setCmdPaletteOpen((v) => !v);
+        return;
+      }
+      // New session
+      if (matchesAccel(e, 'Ctrl+N') && !editable) {
+        e.preventDefault();
+        setSelectedId(null);
+        return;
+      }
+      // Close current session → back to dashboard
+      if (matchesAccel(e, 'Ctrl+W') && !editable) {
+        e.preventDefault();
+        setSelectedId(null);
+        return;
+      }
+      // Cycle next / prev session
+      if (matchesAccel(e, 'Ctrl+Tab')) {
+        e.preventDefault();
+        cycleSession(1);
+        return;
+      }
+      if (matchesAccel(e, 'Ctrl+Shift+Tab')) {
+        e.preventDefault();
+        cycleSession(-1);
+        return;
+      }
+      // Ctrl+J → toggle to previous session
+      if (matchesAccel(e, 'Ctrl+J') && !editable) {
+        e.preventDefault();
+        togglePrevious();
+        return;
+      }
+      // Ctrl+1..9 → jump to N-th session
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key) && !editable) {
+        e.preventDefault();
+        const visible = sessionsList.filter((s) => !isEmptyDeadSession(s));
+        const idx = parseInt(e.key, 10) - 1;
+        const target = visible[idx];
+        if (target) setSelectedId(target.sessionId);
+        return;
+      }
+      // Focus shortcuts (Alt+1/2/3, Ctrl+L).
+      if (matchesAccel(e, 'Alt+1')) {
+        e.preventDefault();
+        (document.querySelector('.session-list') as HTMLElement | null)?.focus();
+        return;
+      }
+      if (matchesAccel(e, 'Alt+2')) {
+        e.preventDefault();
+        const ws = document.querySelector('.single-workspace') as HTMLElement | null;
+        (ws?.querySelector<HTMLElement>('[tabindex],input,textarea,button') ?? ws)?.focus();
+        return;
+      }
+      if (matchesAccel(e, 'Alt+3') || matchesAccel(e, 'Ctrl+L')) {
+        e.preventDefault();
+        const inputEl = document.querySelector('.input-box') as HTMLElement | null;
+        inputEl?.focus();
+        return;
+      }
+      // Options panel toggle (Ctrl+,)
+      if (matchesAccel(e, 'Ctrl+,') && !editable) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('agentview:open-options'));
+        return;
+      }
+      // F11 → fullscreen toggle via main process
+      if (e.key === 'F11') {
+        e.preventDefault();
+        window.av.app?.toggleFullscreen?.().catch(() => undefined);
+        return;
+      }
+      // F6 keeps the sidebar↔workspace cycle from the previous global handler.
+      if (e.key === 'F6') {
+        e.preventDefault();
+        const sidebar = document.querySelector('.session-list') as HTMLElement | null;
+        const workspace = document.querySelector('.single-workspace') as HTMLElement | null;
+        const inSidebar = sidebar?.contains(document.activeElement);
+        if (inSidebar && workspace) {
+          (workspace.querySelector<HTMLElement>('[tabindex],input,textarea,button') ?? workspace).focus();
+        } else if (sidebar) {
+          sidebar.focus();
+        }
+        return;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [cycleSession, togglePrevious, sessionsList]);
+
+  // Build the static command-palette catalog. Session entries are added
+  // dynamically inside the palette component itself.
+  const paletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      {
+        id: 'new-session',
+        label: '새 작업 시작',
+        hint: '대시보드로 돌아가서 새 세션 시작',
+        accel: 'Ctrl+N',
+        group: '명령',
+        run: () => setSelectedId(null)
+      },
+      {
+        id: 'shortcut-help',
+        label: '단축키 도움말 열기',
+        accel: 'Ctrl+/',
+        group: '명령',
+        run: () => setShortcutHelpOpen(true)
+      },
+      {
+        id: 'next-session',
+        label: '다음 세션',
+        accel: 'Ctrl+Tab',
+        group: '명령',
+        run: () => cycleSession(1)
+      },
+      {
+        id: 'prev-session',
+        label: '이전 세션',
+        accel: 'Ctrl+Shift+Tab',
+        group: '명령',
+        run: () => cycleSession(-1)
+      },
+      {
+        id: 'recent-toggle',
+        label: '최근 세션으로 전환',
+        accel: 'Ctrl+J',
+        group: '명령',
+        run: togglePrevious
+      },
+      {
+        id: 'theme-toggle',
+        label: `테마 전환 (현재: ${resolveTheme(theme)})`,
+        hint: 'System → Light → Dark 순환',
+        group: '명령',
+        run: () => {
+          const next = nextTheme(theme);
+          setTheme(next);
+          setThemeState(next);
+        }
+      },
+      {
+        id: 'theme-light',
+        label: '테마: 라이트 모드',
+        group: '테마',
+        run: () => {
+          setTheme('light');
+          setThemeState('light');
+        }
+      },
+      {
+        id: 'theme-dark',
+        label: '테마: 다크 모드',
+        group: '테마',
+        run: () => {
+          setTheme('dark');
+          setThemeState('dark');
+        }
+      },
+      {
+        id: 'theme-system',
+        label: '테마: 시스템 따라가기',
+        group: '테마',
+        run: () => {
+          setTheme('system');
+          setThemeState('system');
+        }
+      },
+      {
+        id: 'fullscreen',
+        label: '전체화면 토글',
+        accel: 'F11',
+        group: '창',
+        run: () => window.av.app?.toggleFullscreen?.().catch(() => undefined)
+      },
+      {
+        id: 'open-options',
+        label: '옵션 패널 열기',
+        accel: 'Ctrl+,',
+        group: '명령',
+        run: () => window.dispatchEvent(new CustomEvent('agentview:open-options'))
+      },
+      {
+        id: 'reload',
+        label: '세션 목록 새로고침',
+        group: '명령',
+        run: () => reloadSessions()
+      }
+    ],
+    [theme, cycleSession, togglePrevious, reloadSessions]
+  );
+
   const onStartNewSession = useCallback(
     async (input: NewSessionInput) => {
-      // Drop an optimistic placeholder card on the grid the moment the user
-      // clicks "▶ 새 작업 시작". Without this they sit in front of an
-      // unchanged grid for 2-5 s while the daemon-spawned worker writes
-      // ~/.claude/jobs/<short>/state.json — the only thing the scanner reads.
       const tempId = makeTempId();
       const displayName = (input.name?.trim() || input.prompt.trim().split(/\r?\n/)[0] || '새 작업').slice(0, 60);
       const placeholder: PendingSession = {
@@ -156,17 +440,11 @@ export default function App() {
         setPending((prev) => prev.filter((p) => p.tempId !== tempId));
         throw err;
       }
-      // Stay on the dashboard so the user can keep dispatching new work
-      // without bouncing into the detail view. Poll a few times so the
-      // freshly-spawned card appears in the grid as soon as the daemon
-      // registers the worker (~3-5s) and the jsonl starts being written.
       if (res && res.sessionId) {
         const realSessionId = res.sessionId;
         setPending((prev) =>
           prev.map((p) => (p.tempId === tempId ? { ...p, realSessionId } : p))
         );
-        // Single mode is the only mode now — always auto-select the newly
-        // started session so the user lands on its detail view immediately.
         setSelectedId(realSessionId);
         for (const delay of [400, 900, 2000, 4000, 6500]) {
           window.setTimeout(() => reloadSessions(), delay);
@@ -202,11 +480,6 @@ export default function App() {
       </div>
     ) : null;
 
-  // Single mode is the only mode after P1: left sidebar with the session
-  // list, right pane shows the selected session detail (or the "new task"
-  // composer when nothing is selected). Wrapped in ErrorBoundary so a
-  // render failure shows a friendly recovery screen instead of a blank
-  // window (researcher item #466).
   return (
     <ErrorBoundary>
     <div className="app no-chrome">
@@ -267,6 +540,16 @@ export default function App() {
           )}
         </div>
       </div>
+      <CommandPalette
+        open={cmdPaletteOpen}
+        onClose={() => setCmdPaletteOpen(false)}
+        sessions={sessionsList}
+        renames={renames}
+        selectedId={selectedId}
+        onJump={jumpToSession}
+        commands={paletteCommands}
+      />
+      <ShortcutHelp open={shortcutHelpOpen} onClose={() => setShortcutHelpOpen(false)} />
       {toastNode}
     </div>
     </ErrorBoundary>
