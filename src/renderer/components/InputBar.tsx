@@ -326,6 +326,54 @@ export function InputBar(props: InputBarProps) {
 
   const disabled = sending;
 
+  // researcher item #118 — drag & drop file attachments. Electron's
+  // File objects carry the absolute filesystem path so we can shovel
+  // them straight into the attachments list without an extra dialog.
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const acceptDroppedFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const arr: Array<File & { path?: string }> = Array.from(files) as Array<File & { path?: string }>;
+      const newPaths: string[] = [];
+      for (const f of arr) {
+        if (f.path && f.path.trim()) {
+          newPaths.push(f.path);
+        } else if (f.type.startsWith('image/')) {
+          const buf = await f.arrayBuffer();
+          const ext = (f.type.split('/')[1] || 'png').toLowerCase().split(';')[0];
+          const saved = await window.av.picker.savePastedImage(buf, ext);
+          if (saved) newPaths.push(saved);
+        }
+      }
+      if (newPaths.length === 0) return;
+      setAttachments((prev) => {
+        const seen = new Set(prev);
+        const next = [...prev];
+        for (const p of newPaths) if (!seen.has(p)) next.push(p);
+        return next;
+      });
+    },
+    [setAttachments]
+  );
+
+  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer.types?.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!isDragOver) setIsDragOver(true);
+  };
+  const onDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    // dragleave fires for every child; only clear when leaving the row.
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragOver(false);
+  };
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    setIsDragOver(false);
+    if (!e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+    e.preventDefault();
+    void acceptDroppedFiles(e.dataTransfer.files);
+  };
+
   const addAttachments = async () => {
     const picked = await window.av.picker.files(isNew ? props.defaultCwd : props.fixedCwd);
     if (picked.length === 0) return;
@@ -826,7 +874,12 @@ export function InputBar(props: InputBarProps) {
         </div>
       )}
 
-      <div className="input-row">
+      <div
+        className={`input-row ${isDragOver ? 'drag-over' : ''}`}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         {/* Left column: small attachment button on top, mini history nav
             below. Stacking these vertically frees horizontal space for the
             textarea and matches the new compact composer layout. */}

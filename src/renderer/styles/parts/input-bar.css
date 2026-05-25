@@ -105,7 +105,27 @@
 }
 
 /* --- composer card (attach + textarea + send all in one rounded box) --- */
+.input-row.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.input-row.drag-over::after {
+  content: '📎 파일을 놓으면 첨부됩니다';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+  background: rgba(var(--accent-rgb, 122, 162, 255), 0.04);
+  border-radius: inherit;
+  z-index: 5;
+}
 .input-row {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr auto;
   gap: 0;
