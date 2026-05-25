@@ -14,7 +14,7 @@ import { adoptLive, type AdoptLiveResult } from './adoption.js';
 import { acquirePid, releasePid } from './pid.js';
 import { getProcessInfo } from './process-info.js';
 import { startServer, type ServerHandle } from './server.js';
-import { createWorkerFactory } from './workers/index.js';
+import { createWorkerFactory, createSelfPtySpawn } from './workers/index.js';
 
 const HOME = homedir();
 const DAEMON_DIR = join(HOME, '.agentview', 'daemon');
@@ -103,6 +103,14 @@ async function main(): Promise<void> {
       catalog: adopt.catalog,
       roster: adopt.roster,
       workerFactory: createWorkerFactory({
+        // K-era routing: every backend resolved by sessionRunner.routeBackend
+        // arrives here as `claude`, which the new ClaudeAdapter handles
+        // by spawning the claude CLI directly via createSelfPtySpawn().
+        // No more ~/.claude/daemon/dispatch/<short>.json writes and no
+        // more roster.json polling — the supervisor dependency is gone.
+        claudeOptions: {
+          spawn: createSelfPtySpawn(),
+        },
         codexOptions: {
           conversationDir: join(DAEMON_DIR, 'conversations'),
         },

@@ -1,0 +1,31 @@
+/* ask-panel-extras.css — .ask-panel multi-select + submit row additions
+   Extracted from global.css lines 1920-1947 during 20260524T1217Z-refactor. */
+
+/* Multi-select ask-panel additions: selected state + submit row */
+button.ask-panel-option.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+button.ask-panel-option.selected .ask-panel-key {
+  background: var(--running);
+  color: #0b0d12;
+}
+.ask-panel-multi-badge {
+  margin-left: 10px;
+  padding: 2px 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10.5px;
+  border-radius: 999px;
+  font-weight: 600;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ask-panel-submit-row {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.ask-panel-submit { min-width: 160px; }

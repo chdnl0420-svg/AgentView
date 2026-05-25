@@ -1,0 +1,23 @@
+# 사용자 입력 정리
+
+- **goal**: AgentView (Electron + React + TS) 프로젝트의 모놀리식 파일을 객체·역할 단위로 분리한다.
+- **scope**:
+  - 분리 대상:
+    - `src/main/ipc.ts` (772줄 — HARD CAP 400 초과)
+    - `src/renderer/App.tsx` (957줄 — HARD CAP 400 초과)
+    - `src/renderer/styles/global.css` (2335줄 — HARD CAP 400 초과)
+  - 제외:
+    - 기능 변경·신규 기능 추가 (순수 구조 작업)
+    - main process 의 작은 파일 (`src/main/index.ts` 281줄 — 한도 내)
+    - 이미 분리된 컴포넌트 (`src/renderer/components/*`)
+    - `avd/` 워크스페이스 (별도 책임)
+- **non-functional**:
+  - 기존 모든 동작 보존 (typecheck + build 통과 + UI smoke).
+  - 변경 후 각 파일 200줄 이하 권장, 400줄 hard cap.
+- **constraints**:
+  - 사용자가 진행 중인 다른 untracked 변경 (package.json, scripts/_*.cjs 등) 은 손대지 않음.
+  - 브랜치 `codex/merge-split-a-backend` 위에서 작업.
+  - 기존 API 노출 (`window.av.*`, IPC channel 이름 등) 유지.
+- **open-questions**:
+  - 일부 모듈 (예: SessionList side panel) 은 컴포넌트 단위로 이미 분리돼있어 추가 분리 불요. → 자동 결정: 손대지 않음.
+  - 새 폴더 컨벤션: `src/main/ipc/*`, `src/renderer/state/*`, `src/renderer/styles/components/*` 등 자연스러운 sub-package. → 자동 결정: 기능 응집 기준 폴더 분리.

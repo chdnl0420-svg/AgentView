@@ -1,0 +1,50 @@
+/* attachments.css — .attachment-strip + .att-chip composer chips
+   Extracted from global.css lines 1162-1208 during 20260524T1217Z-refactor. */
+
+/* ===== Attachment chips (composer) ===== */
+
+.attachment-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev-1);
+}
+.att-chip {
+  position: relative;
+  width: 56px; height: 56px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid; place-items: center;
+}
+.att-chip:hover { border-color: var(--border-strong); }
+.att-chip .att-icon {
+  font-size: 26px;
+}
+.att-chip.att-image img {
+  width: 56px; height: 56px;
+  object-fit: cover;
+  display: block;
+}
+.att-x {
+  position: absolute;
+  top: 0; right: 0;
+  width: 20px; height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  display: grid; place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8), 0 0 4px rgba(0, 0, 0, 0.6);
+}
+.att-chip:hover .att-x { opacity: 1; }
+.att-x:hover { color: var(--crashed); }

@@ -1,0 +1,57 @@
+/* slash-popup.css — .slash-popup + .slash-item dropdown
+   Extracted from global.css lines 1210-1263 during 20260524T1217Z-refactor. */
+
+/* ===== Slash command popup ===== */
+
+.slash-popup {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(100% - 4px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 50;
+}
+.input-bar { position: relative; }
+.slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 12px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.slash-item:last-child { border-bottom: 0; }
+.slash-item.focus, .slash-item:hover { background: var(--accent-soft); }
+.slash-item .slash-name {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.slash-item .slash-scope {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 10px;
+}
+.slash-item .slash-scope.project { color: var(--running); }
+.slash-item .slash-scope.builtin { color: var(--text-muted); }
+.slash-item .slash-desc {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1; min-width: 0;
+}

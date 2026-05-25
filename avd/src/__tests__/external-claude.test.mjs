@@ -257,7 +257,135 @@ test('createWorkerFactory routes external-claude and codex adapters', async () =
   assert.equal(codexCalls.length, 1);
 
   await assert.rejects(
-    () => factory({ sessionId: 's-claude', cwd: process.cwd(), backend: 'claude' }),
+    () => factory({ sessionId: 's-unknown', cwd: process.cwd(), backend: 'unknown-backend' }),
     /ADAPTER_UNAVAILABLE/
   );
+});
+
+test('createWorkerFactory routes claude backend through ClaudeAdapter', async () => {
+  const claudeCalls = [];
+  const factory = createWorkerFactory({
+    claude: {
+      start: async (request) => {
+        claudeCalls.push(request);
+        return {
+          sessionId: request.sessionId,
+          pid: 11111,
+          isAlive: () => true,
+          stop: async () => {},
+          send: async () => {},
+        };
+      },
+    },
+  });
+  const handle = await factory({
+    sessionId: 'cf111111-aaaa-bbbb-cccc-123456789abc',
+    cwd: process.cwd(),
+    backend: 'claude',
+    prompt: 'hi',
+  });
+  assert.equal(handle.pid, 11111);
+  assert.equal(claudeCalls.length, 1);
+  assert.equal(claudeCalls[0].sessionId, 'cf111111-aaaa-bbbb-cccc-123456789abc');
+});
+
+test('createWorkerFactory forwards claudeOptions to the default ClaudeAdapter', async () => {
+  let spawned = 0;
+  const factory = createWorkerFactory({
+    claudeOptions: {
+      spawn: async (request) => {
+        spawned++;
+        return {
+          sessionId: request.sessionId,
+          pid: 22222,
+          isAlive: () => true,
+          stop: async () => {},
+          send: async () => {},
+        };
+      },
+    },
+  });
+  const handle = await factory({
+    sessionId: 'cf222222-aaaa-bbbb-cccc-123456789abc',
+    cwd: process.cwd(),
+    backend: 'claude',
+    prompt: 'hi',
+  });
+  assert.equal(handle.pid, 22222);
+  assert.equal(spawned, 1);
+});
+
+test('createWorkerFactory forwards externalClaudeOptions to the default ExternalClaudeAdapter', async () => {
+  const root = freshRoot('factory-opts');
+  try {
+    let selfPtyCalled = false;
+    const factory = createWorkerFactory({
+      externalClaudeOptions: {
+        daemonDir: join(root, 'claude-daemon'),
+        pollIntervalMs: 5,
+        maxPolls: 1,
+        selfPtySpawn: async (request) => {
+          selfPtyCalled = true;
+          return {
+            sessionId: request.sessionId,
+            pid: 54321,
+            isAlive: () => true,
+            stop: async () => {},
+            send: async () => {},
+          };
+        },
+      },
+    });
+    const handle = await factory({
+      sessionId: 'fa222222-aaaa-bbbb-cccc-123456789abc',
+      cwd: root,
+      backend: 'external-claude',
+      prompt: 'hello',
+    });
+    assert.equal(handle.pid, 54321);
+    assert.equal(selfPtyCalled, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ExternalClaudeAdapter falls back to selfPtySpawn when external daemon never registers worker', async () => {
+  const root = freshRoot('fallback');
+  try {
+    const selfPtyCalls = [];
+    const adapter = new ExternalClaudeAdapter({
+      daemonDir: join(root, 'claude-daemon'),
+      pollIntervalMs: 5,
+      maxPolls: 2,
+      deliverPrompt: async () => {
+        throw new Error('must not deliver via roster path when falling back');
+      },
+      selfPtySpawn: async (request) => {
+        selfPtyCalls.push(request);
+        return {
+          sessionId: request.sessionId,
+          pid: 99999,
+          conversationPath: join(root, `${request.sessionId}.jsonl`),
+          isAlive: () => true,
+          stop: async () => {},
+          send: async () => {},
+        };
+      },
+    });
+    const handle = await adapter.start({
+      sessionId: 'fb111111-aaaa-bbbb-cccc-123456789abc',
+      cwd: root,
+      backend: 'external-claude',
+      prompt: 'hello',
+      agent: 'claude',
+    });
+    assert.equal(handle.pid, 99999);
+    assert.equal(handle.sessionId, 'fb111111-aaaa-bbbb-cccc-123456789abc');
+    assert.equal(handle.conversationPath, join(root, 'fb111111-aaaa-bbbb-cccc-123456789abc.jsonl'));
+    assert.equal(selfPtyCalls.length, 1);
+    assert.equal(selfPtyCalls[0].cwd, root);
+    assert.equal(selfPtyCalls[0].prompt, 'hello');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

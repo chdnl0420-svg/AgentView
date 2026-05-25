@@ -1,0 +1,34 @@
+/* ask-buttons.css — .ask-options li + button.ask-option-btn
+   Extracted from global.css lines 1526-1556 during 20260524T1217Z-refactor. */
+
+/* AskUserQuestion clickable answer buttons — large click target, hover
+   feedback, clear "이 옵션 보내기" affordance. */
+.ask-options li { display: list-item; }
+button.ask-option-btn {
+  appearance: none;
+  cursor: pointer;
+  background: var(--bg-elev-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: all 120ms ease;
+}
+button.ask-option-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  transform: translateX(2px);
+}
+button.ask-option-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+button.ask-option-btn strong { color: var(--accent); }
+button.ask-option-btn span { color: var(--text-secondary); font-size: 12.5px; }

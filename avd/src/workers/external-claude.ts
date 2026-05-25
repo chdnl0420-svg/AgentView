@@ -4,7 +4,7 @@ import { connect, type Socket } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { WorkerAdapter, WorkerAdapterRequest } from './adapter.js';
-import type { WorkerHandle } from './index.js';
+import type { WorkerHandle, WorkerSendOptions } from './index.js';
 
 const DEFAULT_DAEMON_DIR = join(homedir(), '.claude', 'daemon');
 const DEFAULT_POLL_MS = 200;
@@ -32,6 +32,16 @@ export type PromptDelivery = (
   prompt: string
 ) => Promise<void>;
 
+/**
+ * Fallback spawner invoked when the external claude daemon (supervisor)
+ * does not register a worker within the polling window. AVD's stated
+ * purpose is to replace the unstable `claude agents` supervisor — when
+ * the supervisor is absent (e.g., CLI versions without `--headless`),
+ * the adapter must still be able to bring up a worker. Production wires
+ * this to a node-pty spawn of the claude CLI; tests inject a fake.
+ */
+export type SelfPtySpawn = (request: WorkerAdapterRequest) => Promise<WorkerHandle>;
+
 export interface ExternalClaudeAdapterOptions {
   daemonDir?: string;
   pollIntervalMs?: number;
@@ -40,6 +50,7 @@ export interface ExternalClaudeAdapterOptions {
   deliveryRetryMs?: number;
   deliveryMaxAttempts?: number;
   deliverPrompt?: PromptDelivery;
+  selfPtySpawn?: SelfPtySpawn;
   log?: Pick<Console, 'warn'>;
 }
 
@@ -55,6 +66,7 @@ export class ExternalClaudeAdapter implements WorkerAdapter {
   private readonly deliveryRetryMs: number;
   private readonly deliveryMaxAttempts: number;
   private readonly deliverPrompt: PromptDelivery;
+  private readonly selfPtySpawn: SelfPtySpawn | null;
   private readonly log: Pick<Console, 'warn'>;
 
   constructor(options: ExternalClaudeAdapterOptions = {}) {
@@ -65,6 +77,7 @@ export class ExternalClaudeAdapter implements WorkerAdapter {
     this.deliveryRetryMs = options.deliveryRetryMs ?? DEFAULT_DELIVERY_RETRY_MS;
     this.deliveryMaxAttempts = options.deliveryMaxAttempts ?? DEFAULT_DELIVERY_MAX_ATTEMPTS;
     this.deliverPrompt = options.deliverPrompt ?? sendPromptToExternalClaude;
+    this.selfPtySpawn = options.selfPtySpawn ?? null;
     this.log = options.log ?? console;
   }
 
@@ -73,6 +86,15 @@ export class ExternalClaudeAdapter implements WorkerAdapter {
     await this.writeDispatch(short, request);
     const worker = await this.waitForWorker(short, request.sessionId);
     if (!worker) {
+      // External claude supervisor did not register a worker within the
+      // polling window. When a self-PTY fallback is wired, spawn claude
+      // directly — this is the path that keeps AVD functional on CLI
+      // versions whose `claude agents --headless` entrypoint is absent.
+      // The fallback function owns the entire WorkerHandle (including
+      // prompt delivery) so we return its result verbatim.
+      if (this.selfPtySpawn) {
+        return this.selfPtySpawn(request);
+      }
       throw new Error(`EXTERNAL_CLAUDE_UNAVAILABLE session=${short}`);
     }
     const prompt = request.prompt ?? '';
@@ -93,6 +115,15 @@ export class ExternalClaudeAdapter implements WorkerAdapter {
         } catch {
           /* best effort */
         }
+      },
+      // Reuse the same retry-aware delivery path used for the initial
+      // prompt; chunk-6 already established this is the safe contract
+      // for talking to the external claude pty socket.
+      send: async (followUpPrompt: string, _opts?: WorkerSendOptions) => {
+        if (!isProcessAlive(worker.pid)) {
+          throw new Error('WORKER_DEAD');
+        }
+        await this.deliverPromptWithRetry(worker, followUpPrompt);
       },
     };
   }

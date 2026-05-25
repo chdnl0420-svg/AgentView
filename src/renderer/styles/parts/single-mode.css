@@ -1,0 +1,241 @@
+/* single-mode.css — .dashboard.single + .session-list panel + .single-workspace + .view-mode-toggle + cards override + delete-mode card outline + waiting pulse — remainder of file
+   Extracted from global.css lines 2098-2336 during 20260524T1217Z-refactor. */
+
+/* ===== Single (dual) mode ===== */
+
+.dashboard.single {
+  display: grid;
+  grid-template-columns: clamp(280px, 30%, 420px) 1fr;
+  grid-template-rows: 1fr;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Session list (left panel) */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elev-1);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.session-list-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.session-list-new {
+  flex: 1;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.session-list-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  min-height: 0;
+}
+
+.session-list-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.session-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: transparent;
+  border: 1px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  transition: all 0.12s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.session-list-item:hover {
+  background: var(--bg-elev-2);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.session-list-item.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.session-list-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-list-dot.running   { background: var(--running); box-shadow: 0 0 0 0 rgba(109,217,168,0.5); animation: pulse 1.8s infinite; }
+.session-list-dot.waiting,
+.session-list-dot.idle      { background: var(--waiting); }
+.session-list-dot.completed { background: var(--completed); }
+.session-list-dot.finished  { background: var(--finished); }
+.session-list-dot.crashed   { background: var(--crashed); }
+
+.session-list-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.session-list-time {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Work area (right panel) */
+.single-workspace {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+  min-height: 0;
+}
+
+/* Override 100vh from .detail-page when embedded in single mode */
+.single-workspace .detail-page {
+  flex: 1;
+  min-height: 0;
+}
+
+/* New-task input centered in the workspace */
+.single-new-task {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  min-height: 0;
+}
+
+.single-new-task .input-bar {
+  width: 100%;
+  max-width: 660px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elev-1);
+  border-top: 1px solid var(--border);
+}
+
+.single-new-task .input-bar::before {
+  display: none;
+}
+
+/* Mode toggle — lives in session-list-head (single mode) and section-head (card mode) */
+.view-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.view-mode-btn {
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: all 0.12s;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.view-mode-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--bg-elev-3); }
+.view-mode-btn.active { color: var(--accent); background: var(--accent-soft); cursor: default; }
+.view-mode-btn:disabled:not(.active) { opacity: 0.4; cursor: not-allowed; }
+
+/* Force-fixed card sizing — overrides the auto-fill expansion when only
+   a few cards are present. The target is "size of one card when 16 fit
+   on screen at 1440px wide": ~290px × 175px. */
+.cards {
+  grid-template-columns: repeat(auto-fill, 290px) !important;
+  justify-content: start;
+  align-content: start;
+  align-items: start;
+}
+.session-card, .job-card {
+  width: 290px !important;
+  height: 168px !important;
+  min-height: 168px !important;
+  max-height: 168px !important;
+  padding: 12px 14px !important;
+  overflow: hidden;
+}
+.session-card .card-snippet, .job-card .card-snippet {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Responsive: keep fixed height even on narrow viewports */
+@media (max-width: 960px) {
+  .session-card, .job-card {
+    height: 168px !important;
+    min-height: 168px !important;
+    max-height: 168px !important;
+  }
+}
+
+/* Delete mode — slide status tag right to make room for checkbox on the left */
+.session-card.delete-mode .status-tag {
+  transform: translateX(28px);
+  transition: transform 200ms ease;
+}
+.session-card.delete-mode.checked {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* Waiting state — soft amber glow pulse */
+@keyframes wait-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.18);
+    transform: scale(1.005);
+  }
+}
+.session-card.waiting,
+.session-card[data-status="waiting"] {
+  animation: wait-pulse 1.6s ease infinite;
+  border-color: var(--warn, #f59e0b);
+}

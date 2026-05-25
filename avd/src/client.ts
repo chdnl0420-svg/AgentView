@@ -50,6 +50,18 @@ export interface StartSessionAck {
   pid: number;
 }
 
+export interface SendMessageInput {
+  sessionId: string;
+  prompt: string;
+  permissionMode?: string | null;
+}
+
+export interface SendMessageAck {
+  ok: true;
+  sessionId: string;
+  deliveredAt: number;
+}
+
 export class AvdClient extends EventEmitter {
   private socket: Socket | null = null;
   private inbox: Buffer = Buffer.alloc(0);
@@ -223,6 +235,16 @@ export class AvdClient extends EventEmitter {
       conversationPath: input.conversationPath ?? null,
     });
     return reply as unknown as StartSessionAck;
+  }
+
+  async sendMessage(input: SendMessageInput): Promise<SendMessageAck> {
+    const reply = await this.sendCtrlRaw({
+      cmd: 'send-message',
+      sessionId: input.sessionId,
+      prompt: input.prompt,
+      permissionMode: input.permissionMode ?? null,
+    });
+    return reply as unknown as SendMessageAck;
   }
 
   async close(): Promise<void> {

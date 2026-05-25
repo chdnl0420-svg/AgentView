@@ -1,0 +1,77 @@
+/* topbar.css — .topbar, .brand, .tabs, .live-pill, .btn (primary/danger/ghost/sm)
+   Extracted from global.css lines 196-269 during 20260524T1217Z-refactor. */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 18px;
+  background: var(--bg-elev-1);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  height: 52px;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0.2px; }
+.brand .logo {
+  width: 26px; height: 26px; border-radius: 7px;
+  background: linear-gradient(135deg, #7c9bff, #b388ff);
+  display: grid; place-items: center; color: #0b0d12; font-weight: 800; font-size: 13px;
+}
+.brand .sub { color: var(--text-muted); font-weight: 500; font-size: 12.5px; }
+
+.tabs { display: flex; gap: 4px; margin-left: 8px; }
+.tabs button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.12s;
+}
+.tabs button:hover { color: var(--text-primary); background: var(--bg-elev-2); }
+.tabs button.active { color: var(--accent); background: var(--accent-soft); }
+
+.topbar .spacer { flex: 1; }
+
+.live-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 600; color: var(--running);
+  padding: 3px 9px; border-radius: 999px; background: var(--running-soft);
+  user-select: none;
+}
+.live-pill .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--running);
+  box-shadow: 0 0 0 0 rgba(109, 217, 168, 0.6);
+  animation: pulse 1.6s infinite;
+}
+
+.btn {
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  font-size: 12.5px; font-weight: 500;
+  transition: all 0.12s;
+  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn:hover {
+  background: var(--bg-elev-3); color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.primary {
+  background: var(--accent); color: #0b0d12;
+  border-color: var(--accent); font-weight: 600;
+}
+.btn.primary:hover {
+  background: var(--accent-strong); border-color: var(--accent-strong); color: #0b0d12;
+}
+.btn.danger {
+  color: var(--crashed); background: var(--crashed-soft); border-color: var(--crashed-soft);
+}
+.btn.danger:hover { background: rgba(244,116,116,0.28); }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover { background: var(--bg-elev-2); }
+.btn.sm { padding: 4px 9px; font-size: 11.5px; }

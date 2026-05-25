@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import type { WorkerAdapter, WorkerAdapterRequest } from './adapter.js';
-import type { WorkerHandle } from './index.js';
+import type { WorkerHandle, WorkerSendOptions } from './index.js';
 
 const DEFAULT_KILL_TIMEOUT_MS = 1000;
 
@@ -75,6 +75,17 @@ export class CodexAdapter implements WorkerAdapter {
       isAlive: () => !exitState.exited && isProcessAlive(child.pid ?? -1),
       stop: async () => {
         await stopChild(child, exitState.exitedPromise, this.killTimeoutMs);
+      },
+      // codex CLI is invoked via `codex exec [resume] --json ... -`, which
+      // reads a single prompt from stdin and then exits — `child.stdin` is
+      // already closed (`child.stdin.end(...)`) above. The backend has no
+      // mechanism to deliver a follow-up message into the same session.
+      // Until codex grows a long-lived RPC, follow-ups must be modeled as
+      // a brand-new session (chunk-7 resumeSessionId path).
+      send: async (_prompt: string, _opts?: WorkerSendOptions) => {
+        throw new Error(
+          'NOT_SUPPORTED: codex backend does not support follow-up messages — start a new session instead'
+        );
       },
     };
   }

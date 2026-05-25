@@ -147,6 +147,7 @@ async function startWorkerSession(
       backend: req.backend,
       pid: worker.pid,
       startedAt,
+      handle: worker,
     });
     rosterRegistered = true;
     const conversationPath = worker.conversationPath ?? req.conversationPath ?? undefined;
@@ -244,6 +245,38 @@ function handleFrame(
       }
       subscriptions.unsubscribe(sessionId, slot.socket);
       sendCtrlJson(slot.socket, { ok: true });
+      return;
+    }
+    if (cmd === 'send-message') {
+      const sessionId = asString(body.sessionId);
+      const prompt = typeof body.prompt === 'string' ? body.prompt : null;
+      const permissionMode = asOptionalString(body.permissionMode);
+      if (!sessionId || !prompt || prompt.length === 0) {
+        sendErr(slot.socket, 'INVALID_SEND_REQUEST');
+        return;
+      }
+      const handle = startSession.roster?.getHandle(sessionId);
+      if (!handle) {
+        sendErr(slot.socket, 'UNKNOWN_SESSION', { sessionId });
+        return;
+      }
+      if (!handle.isAlive()) {
+        sendErr(slot.socket, 'WORKER_DEAD', { sessionId });
+        return;
+      }
+      handle
+        .send(prompt, { permissionMode })
+        .then(() => {
+          sendCtrlJson(slot.socket, {
+            ok: true,
+            sessionId,
+            deliveredAt: Date.now(),
+          });
+        })
+        .catch((err) => {
+          const msg = String((err as Error).message ?? err);
+          sendErr(slot.socket, 'SEND_FAILED', { sessionId, reason: msg });
+        });
       return;
     }
     // Unknown cmd — fall through to UNSUPPORTED_FRAME for chunk-2 compatibility.
