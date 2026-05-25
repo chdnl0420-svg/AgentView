@@ -1,6 +1,23 @@
 /* detail.css — .detail-page, .toast, .thinking-* (line/meta/dots/action/sub), .markdown table + task list, .detail-head + meta-row + model-tag + perm-tag + badge-dropdown, .detail-body, .empty-detail
    Extracted from global.css lines 421-672 during 20260524T1217Z-refactor. */
 
+/* Clickable cwd in the header meta-row (researcher item #57). */
+.cwd-link {
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  border-radius: 3px;
+}
+.cwd-link:hover {
+  background: var(--bg-elev-2);
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 /* ===== Detail page (fullscreen) ===== */
 
 .detail-page {

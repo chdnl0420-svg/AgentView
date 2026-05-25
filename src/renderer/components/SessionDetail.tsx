@@ -858,7 +858,19 @@ export function SessionDetail({
             >
               <ContextDonut percent={contextPct} />
             </button>
-            <span title={session.cwd}>{session.cwd}</span>
+            <button
+              type="button"
+              className="cwd-link"
+              title={`폴더 열기: ${session.cwd}`}
+              aria-label={`작업 폴더 열기: ${session.cwd}`}
+              onClick={() => {
+                if (session.cwd) {
+                  void window.av.shell.openPath(session.cwd).catch(() => undefined);
+                }
+              }}
+            >
+              {session.cwd}
+            </button>
             <button
               type="button"
               className={`filter-toggle ${onlyMine ? 'on' : ''}`}
