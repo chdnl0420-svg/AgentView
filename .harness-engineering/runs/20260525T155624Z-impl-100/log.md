@@ -12,3 +12,11 @@
 - T2 [2026-05-25T16:05:00Z] User instruction 추가 (verbatim): "세션리스트쪽 큰변경10개 중간변경 10개 추가"
 - T2+ picklist 확장 — SessionList 영역에 L 10개 + M 10개 추가 (그룹/태그/아카이브/가상스크롤/다중선택/저장된뷰/URL상태/메시지검색/DnD 정렬/워크스페이스). 총 picklist ~120 항목으로 확장.
 - T2+ Batch 순서 변경 — Batch A (단축키), Batch B (알림+트레이) 진행 후 Batch SL (SessionList 신규 20개) 를 Batch C 로 끌어올림.
+- T3 [step 3] 신규 11 lib + 5 components + 5 CSS 작성 + App.tsx/SessionList.tsx/SessionDetail.tsx 통합. typecheck PASS.
+- T4 [step 4] QA — typecheck PASS (3-stage), avd 103/103 PASS, Mock 0 hit, credential 0 hit. coverage-waiver.md 작성.
+- T5 [step 5] codex-reviewer 실 호출 — LGTM:NO + P2 2건 + P3 2건. 4건 모두 자가 수정 (isOnScreen + flushDebounce + null vs [] + 자동 펼침). typecheck PASS 재검증.
+- T6 [step 6] customer waiver — production .exe 부재, release 회차 이월.
+- T7 [step 7] 1차 self-audit + 2차 codex audit. codex 가 SessionList.tsx 955줄 검출 → waiver-sessionlist-size.md 작성 + self-audit 수치 정정. findings.md PASS_WITH_WAIVERS.
+- T8 [step 8] summary.md + summary.html (6 탭 — html-document-rules.md 준수). html-validation.md 작성.
+- T9 [step 9] commit `62b0de8` 작성 (56 파일). status.md 작성. push 안 함. non-waivable 7개 모두 PASS.
+- T9+ [회차 종료] 최종 판정 PASS_WITH_WAIVERS. 모든 9 step 완료.
