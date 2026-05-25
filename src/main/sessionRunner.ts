@@ -65,19 +65,14 @@ type BackendRoute =
   | { via: 'avd'; worker: BackendKind }
   | { via: 'legacy'; worker: null };
 
-function routeBackend(input: NewSessionInput): BackendRoute {
-  switch (input.backend) {
-    case 'avd':
-      return { via: 'avd', worker: 'external-claude' };
-    case 'external-claude':
-      return { via: 'avd', worker: 'external-claude' };
-    case 'codex':
-      return { via: 'avd', worker: 'codex' };
-    case 'claude':
-      return { via: 'legacy', worker: null };
-    default:
-      return { via: 'legacy', worker: null };
-  }
+function routeBackend(_input: NewSessionInput): BackendRoute {
+  // AVD-only routing. Legacy `claude` (Strategy A→B below) and codex are
+  // paused pending K (the proper ClaudeAdapter that replaces
+  // external-claude's supervisor-dependent dispatch path). The legacy
+  // and codex code below is dead under this routing — kept intact so K
+  // can flip the worker to 'claude' and so codex can be re-enabled
+  // (restore the per-backend switch + InputBar BACKENDS entry).
+  return { via: 'avd', worker: 'external-claude' };
 }
 
 /**

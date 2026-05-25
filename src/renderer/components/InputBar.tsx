@@ -32,10 +32,12 @@ const WT_BASE_BRANCH_KEY = 'wt.baseBranch';
 const LAST_BACKEND_KEY = 'lastBackend';
 const NEW_BRANCH_SENTINEL = '__new_branch__';
 
+// AVD is the only active backend. Legacy `claude` (Strategy A→B in
+// sessionRunner) and `codex` are paused until AVD is feature-complete;
+// when codex is re-enabled, restore its entry here and re-activate the
+// codex branch in routeBackend + createWorkerFactory.
 const BACKENDS: Array<{ value: SessionBackend; label: string; hint: string }> = [
-  { value: 'avd', label: 'AVD', hint: 'AgentView 기본 실행 경로' },
-  { value: 'claude', label: 'Claude Agents', hint: 'Claude Code /agents 기반 실행' },
-  { value: 'codex', label: 'Codex', hint: 'Codex CLI 기반 실행' }
+  { value: 'avd', label: 'AVD', hint: 'AgentView 기본 실행 경로' }
 ];
 
 // Claude permission modes — what claude CLI accepts via --permission-mode.
