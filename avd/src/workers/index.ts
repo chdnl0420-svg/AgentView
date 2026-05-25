@@ -57,12 +57,17 @@ export {
   buildSelfPtyArgs,
 } from './self-pty.js';
 export type { SelfPtyOptions } from './self-pty.js';
+export { ClaudeAdapter } from './claude-adapter.js';
+export type { ClaudeAdapterOptions } from './claude-adapter.js';
 
 import { ExternalClaudeAdapter, type ExternalClaudeAdapterOptions } from './external-claude.js';
 import { CodexAdapter, type CodexAdapterOptions } from './codex.js';
+import { ClaudeAdapter, type ClaudeAdapterOptions } from './claude-adapter.js';
 import type { WorkerAdapter, WorkerAdapterRequest, WorkerFactory } from './adapter.js';
 
 export interface WorkerFactoryOptions {
+  claude?: WorkerAdapter;
+  claudeOptions?: ClaudeAdapterOptions;
   externalClaude?: WorkerAdapter;
   externalClaudeOptions?: ExternalClaudeAdapterOptions;
   codex?: WorkerAdapter;
@@ -70,10 +75,17 @@ export interface WorkerFactoryOptions {
 }
 
 export function createWorkerFactory(options: WorkerFactoryOptions = {}): WorkerFactory {
+  const claude = options.claude ?? new ClaudeAdapter(options.claudeOptions);
   const externalClaude = options.externalClaude ?? new ExternalClaudeAdapter(options.externalClaudeOptions);
   const codex = options.codex ?? new CodexAdapter(options.codexOptions);
   return async (request: WorkerAdapterRequest): Promise<WorkerHandle> => {
+    if (request.backend === 'claude') {
+      return claude.start(request);
+    }
     if (request.backend === 'external-claude') {
+      // Legacy backend kept for backward compatibility with pre-K
+      // catalog entries. Production routing now sends every request
+      // through `claude` via routeBackend (sessionRunner.ts).
       return externalClaude.start(request);
     }
     if (request.backend === 'codex') {

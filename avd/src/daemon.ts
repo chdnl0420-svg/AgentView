@@ -103,12 +103,13 @@ async function main(): Promise<void> {
       catalog: adopt.catalog,
       roster: adopt.roster,
       workerFactory: createWorkerFactory({
-        // AVD's reason for existence: replace the unstable external
-        // claude supervisor. Inject the self-PTY fallback so a missing
-        // supervisor no longer leaves every new session stuck at the
-        // "session boot" UI state with no worker spawned.
-        externalClaudeOptions: {
-          selfPtySpawn: createSelfPtySpawn(),
+        // K-era routing: every backend resolved by sessionRunner.routeBackend
+        // arrives here as `claude`, which the new ClaudeAdapter handles
+        // by spawning the claude CLI directly via createSelfPtySpawn().
+        // No more ~/.claude/daemon/dispatch/<short>.json writes and no
+        // more roster.json polling — the supervisor dependency is gone.
+        claudeOptions: {
+          spawn: createSelfPtySpawn(),
         },
         codexOptions: {
           conversationDir: join(DAEMON_DIR, 'conversations'),
