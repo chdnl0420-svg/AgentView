@@ -39,6 +39,22 @@ export function normalizeInputBackend(
   return null;
 }
 
+// Generic single-word prompts that read as "anonymous session" — augment
+// these with a timestamp so multiple "테스트" sessions don't collide on
+// the dashboard. Lowercased on lookup so casing doesn't matter.
+const GENERIC_PROMPTS = new Set([
+  'test', 'tests', 'hi', 'hello', 'hey', 'check', 'ok', 'yes', 'no', 'ping',
+  '테스트', '테스트해줘', '확인', '응', '예', '아니오', '안녕', '안녕하세요', '하이'
+]);
+
+function shortTimestamp(now: Date = new Date()): string {
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+
 /**
  * Derive a stable session display name from the explicit `args.name` or,
  * if absent, the first meaningful line of the user's prompt. Skipping
@@ -47,15 +63,21 @@ export function normalizeInputBackend(
  * fallback while the daemon settles. The first sentence/clause is
  * preferred so a "Plan v3. Implement…" prompt yields "Plan v3" rather
  * than "Plan v3. Implement…".
+ *
+ * When the prompt is empty or so short/generic that it would collide
+ * with other anonymous-looking sessions ("테스트", "test", "hi", …), we
+ * append a `MM/DD HH:mm` timestamp so the dashboard stays readable
+ * instead of showing a wall of identical labels.
  */
 export function deriveSessionName(
   explicitName: string | null | undefined,
-  prompt: string | null | undefined
-): string | null {
+  prompt: string | null | undefined,
+  now: Date = new Date()
+): string {
   const explicit = (explicitName ?? '').trim();
   if (explicit) return explicit.slice(0, 60);
   const body = (prompt ?? '').replace(/\r\n/g, '\n');
-  if (!body.trim()) return null;
+  if (!body.trim()) return `AVD 세션 · ${shortTimestamp(now)}`;
   // Walk line by line, skipping code fences and resume placeholders.
   const lines = body.split('\n');
   let inFence = false;
@@ -85,9 +107,16 @@ export function deriveSessionName(
       const lastSpace = slice.lastIndexOf(' ');
       candidate = (lastSpace >= 12 ? slice.slice(0, lastSpace) : slice).trim();
     }
-    if (candidate) return candidate.slice(0, 60);
+    if (!candidate) continue;
+    // Augment too-short or generic prompts with a timestamp so the dashboard
+    // can tell multiple anonymous-looking sessions apart.
+    const normalized = candidate.toLowerCase();
+    if (candidate.length < 4 || GENERIC_PROMPTS.has(normalized)) {
+      return `${candidate} · ${shortTimestamp(now)}`.slice(0, 60);
+    }
+    return candidate.slice(0, 60);
   }
-  return null;
+  return `AVD 세션 · ${shortTimestamp(now)}`;
 }
 
 export function resolveClaudeExe(): string {

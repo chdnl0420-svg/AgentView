@@ -138,33 +138,6 @@ export function SessionDetail({
     });
   };
 
-  // ---- Goal bar (workspace doc prompt OR meta.lastPrompt) + completed toggle ----
-  const goalDoneKey = `goal.done.${session.sessionId}`;
-  const [goalDone, setGoalDone] = useState<boolean>(() => loadJSON<boolean>(goalDoneKey, false));
-  const [workspacePrompt, setWorkspacePrompt] = useState<string | null>(null);
-  useEffect(() => {
-    setGoalDone(loadJSON<boolean>(goalDoneKey, false));
-    setWorkspacePrompt(null);
-    let cancelled = false;
-    window.av.workspace
-      .read(session.sessionId)
-      .then((md) => {
-        if (cancelled || !md) return;
-        const m = /```\n([\s\S]*?)\n```/.exec(md);
-        if (m) setWorkspacePrompt(m[1].trim().split(/\r?\n/)[0].slice(0, 240));
-      })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.sessionId]);
-  const toggleGoalDone = () => {
-    setGoalDone((v) => {
-      const next = !v;
-      saveJSON(goalDoneKey, next);
-      return next;
-    });
-  };
-
   // ---- Crash banner dismiss (resets per session) ----
   const [crashDismissed, setCrashDismissed] = useState(false);
   useEffect(() => {
@@ -196,9 +169,6 @@ export function SessionDetail({
       window.removeEventListener('keydown', onKey);
     };
   }, [permDropdownOpen, modelDropdownOpen]);
-  // Goal text shown in the goal-row: workspace doc prompt first, then last
-  // user message, then nothing (the row hides itself).
-  const goalText = workspacePrompt || null;
   // Korean label for the four claude permission modes.
   const permLabel = (mode: string): string => {
     switch (mode) {
@@ -909,20 +879,6 @@ export function SessionDetail({
             <div className="crash-banner" role="alert">
               <span>⚠ 에이전트가 비정상 종료되었습니다. 마지막 응답을 확인하세요.</span>
               <button type="button" className="x" onClick={() => setCrashDismissed(true)} aria-label="닫기">×</button>
-            </div>
-          )}
-          {goalText && (
-            <div className={`goal-row ${goalDone ? 'completed' : ''}`}>
-              <input
-                type="checkbox"
-                checked={goalDone}
-                onChange={(e) => {
-                  setGoalDone(e.target.checked);
-                  saveJSON('goal.done.' + session.sessionId, e.target.checked);
-                }}
-                aria-label="목표 완료"
-              />
-              <span className="goal-text">🎯 {goalText}</span>
             </div>
           )}
           {contextPanelOpen && (

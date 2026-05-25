@@ -1,6 +1,5 @@
 import type { BgSession } from '@shared/types';
 import { formatRelative } from '../lib/format';
-import type { ViewMode } from '../lib/viewMode';
 
 interface SessionListProps {
   sessions: BgSession[];
@@ -9,8 +8,6 @@ interface SessionListProps {
   onNewClick: () => void;
   renames: Record<string, string>;
   now: number;
-  viewMode: ViewMode;
-  onViewModeToggle: () => void;
 }
 
 function dotClass(s: BgSession): string {
@@ -24,9 +21,7 @@ export function SessionList({
   onSelect,
   onNewClick,
   renames,
-  now,
-  viewMode,
-  onViewModeToggle
+  now
 }: SessionListProps) {
   return (
     <div className="session-list">
@@ -34,30 +29,6 @@ export function SessionList({
         <button type="button" className="btn primary session-list-new" onClick={onNewClick}>
           ＋ 새 작업
         </button>
-        <div className="view-mode-toggle" title="보기 모드 전환">
-          <button
-            type="button"
-            className={`view-mode-btn ${viewMode === 'cards' ? 'active' : ''}`}
-            onClick={() => viewMode !== 'cards' && onViewModeToggle()}
-            disabled={viewMode === 'cards'}
-            title="카드 모드"
-            aria-label="카드 모드"
-            aria-pressed={viewMode === 'cards' ? 'true' : 'false'}
-          >
-            ▣
-          </button>
-          <button
-            type="button"
-            className={`view-mode-btn ${viewMode === 'single' ? 'active' : ''}`}
-            onClick={() => viewMode !== 'single' && onViewModeToggle()}
-            disabled={viewMode === 'single'}
-            title="단일화면 모드"
-            aria-label="단일화면 모드"
-            aria-pressed={viewMode === 'single' ? 'true' : 'false'}
-          >
-            ▤
-          </button>
-        </div>
       </div>
       <div className="session-list-body">
         {sessions.length === 0 && (
