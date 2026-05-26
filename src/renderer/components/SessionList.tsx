@@ -3,55 +3,9 @@ import type React from 'react';
 import type { BgSession } from '@shared/types';
 import { formatRelative } from '../lib/format';
 import { loadJSON, saveJSON } from '../lib/persistence';
-import { loadArchive, archive as doArchive, unarchive as doUnarchive } from '../lib/sessionArchive';
-import {
-  loadSessionTags,
-  loadTagsMap,
-  setTagsOf,
-  type SessionTag
-} from '../lib/sessionTags';
-import {
-  loadSortMode,
-  saveSortMode,
-  type SortMode
-} from '../lib/sessionOrder';
-import { SessionListMultiBar } from './SessionListMultiBar';
-import { SessionListTagDialog } from './SessionListTagDialog';
 
 const RENAMES_KEY = 'sessionRenames';
 const PINS_KEY = 'sessionPins';
-const FILTER_KEY = 'sessionList.filter';
-const COLLAPSED_GROUPS_KEY = 'sessionList.collapsedGroups';
-const SEARCH_HISTORY_KEY = 'sessionList.searchHistory';
-const ARCHIVE_OPEN_KEY = 'sessionList.archiveOpen';
-const SEARCH_HISTORY_MAX = 8;
-
-type Filter = 'all' | 'active' | 'completed' | 'error' | 'waiting';
-type GroupKey = 'today' | 'yesterday' | 'thisWeek' | 'older';
-
-const FILTER_LABELS: Record<Filter, string> = {
-  all: '모두',
-  active: '실행 중',
-  completed: '완료',
-  error: '오류',
-  waiting: '대기'
-};
-const FILTER_ORDER: Filter[] = ['all', 'active', 'completed', 'error', 'waiting'];
-
-const GROUP_LABELS: Record<GroupKey, string> = {
-  today: '오늘',
-  yesterday: '어제',
-  thisWeek: '이번 주',
-  older: '이전'
-};
-const GROUP_ORDER: GroupKey[] = ['today', 'yesterday', 'thisWeek', 'older'];
-
-const SORT_LABELS: Record<SortMode, string> = {
-  updated: '최근 활동',
-  created: '생성 순',
-  name: '이름 순',
-  manual: '직접 정렬'
-};
 
 function loadPins(): Set<string> {
   return new Set(loadJSON<string[]>(PINS_KEY, []));
@@ -62,27 +16,9 @@ function savePins(pins: Set<string>): void {
   window.dispatchEvent(new CustomEvent('agentview:pins-changed'));
 }
 
-function loadCollapsedGroups(): Set<string> {
-  return new Set(loadJSON<string[]>(COLLAPSED_GROUPS_KEY, []));
-}
-
-function saveCollapsedGroups(set: Set<string>): void {
-  saveJSON(COLLAPSED_GROUPS_KEY, Array.from(set));
-}
-
-function loadSearchHistory(): string[] {
-  return loadJSON<string[]>(SEARCH_HISTORY_KEY, []);
-}
-
-function pushSearchHistory(q: string): string[] {
-  const trimmed = q.trim();
-  if (!trimmed) return loadSearchHistory();
-  const prev = loadSearchHistory();
-  const next = [trimmed, ...prev.filter((s) => s !== trimmed)].slice(0, SEARCH_HISTORY_MAX);
-  saveJSON(SEARCH_HISTORY_KEY, next);
-  return next;
-}
-
+// Highlight matches of `query` inside `text` by wrapping them with
+// <mark class="hl">. Case-insensitive, plain substring search (no regex
+// metacharacters). Returns the original text when query is empty.
 function highlightMatch(text: string, query: string): React.ReactNode {
   if (!query || !text) return text;
   const lowerText = text.toLowerCase();
@@ -115,6 +51,17 @@ interface SessionListProps {
   now: number;
 }
 
+type Filter = 'all' | 'active' | 'completed';
+type GroupKey = 'today' | 'yesterday' | 'thisWeek' | 'older';
+
+const GROUP_LABELS: Record<GroupKey, string> = {
+  today: '오늘',
+  yesterday: '어제',
+  thisWeek: '이번 주',
+  older: '이전',
+};
+const GROUP_ORDER: GroupKey[] = ['today', 'yesterday', 'thisWeek', 'older'];
+
 function dotClass(s: BgSession): string {
   if (!s.alive) return s.status === 'completed' ? 'completed' : s.status === 'crashed' ? 'crashed' : 'finished';
   return s.status === 'running' ? 'running' : 'waiting';
@@ -137,21 +84,6 @@ function isActive(s: BgSession): boolean {
 
 function isCompleted(s: BgSession): boolean {
   return !s.alive && s.status === 'completed';
-}
-
-function isErrorStatus(s: BgSession): boolean {
-  return !s.alive && s.status === 'crashed';
-}
-
-function isWaitingStatus(s: BgSession): boolean {
-  return s.alive && s.status === 'waiting';
-}
-
-function projectNameOf(cwd: string): string {
-  if (!cwd) return '';
-  const norm = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
-  const last = norm.split('/').pop() || '';
-  return last;
 }
 
 function matchesQuery(s: BgSession, name: string, preview: string, q: string): boolean {
@@ -185,22 +117,6 @@ function saveRename(sessionId: string, name: string | null): void {
   window.dispatchEvent(new CustomEvent('agentview:renames-changed'));
 }
 
-function applySort(list: BgSession[], mode: SortMode, renames: Record<string, string>): BgSession[] {
-  const copy = list.slice();
-  if (mode === 'created') {
-    copy.sort((a, b) => b.startedAt - a.startedAt);
-  } else if (mode === 'name') {
-    copy.sort((a, b) => {
-      const an = (renames[a.sessionId] || a.name || a.agent || a.sessionId).toLowerCase();
-      const bn = (renames[b.sessionId] || b.name || b.agent || b.sessionId).toLowerCase();
-      return an.localeCompare(bn);
-    });
-  } else {
-    copy.sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-  return copy;
-}
-
 export function SessionList({
   sessions,
   selectedId,
@@ -210,47 +126,21 @@ export function SessionList({
   now
 }: SessionListProps) {
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<Filter>(() => loadJSON<Filter>(FILTER_KEY, 'all'));
-  const [sortMode, setSortMode] = useState<SortMode>(() => loadSortMode());
+  const [filter, setFilter] = useState<Filter>('all');
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; session: BgSession } | null>(null);
   const [pins, setPins] = useState<Set<string>>(() => loadPins());
-  const [archived, setArchived] = useState<Set<string>>(() => loadArchive());
-  const [tagMap, setTagMap] = useState<Record<string, SessionTag>>(() => loadTagsMap());
-  const [sessionTags, setSessionTags] = useState<Record<string, string[]>>(() => loadSessionTags());
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => loadCollapsedGroups());
-  const [archiveOpen, setArchiveOpen] = useState<boolean>(() => loadJSON<boolean>(ARCHIVE_OPEN_KEY, false));
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [tagDialogOpen, setTagDialogOpen] = useState(false);
-  const [searchHistory, setSearchHistory] = useState<string[]>(() => loadSearchHistory());
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [sortMenuOpen, setSortMenuOpen] = useState(false);
-  const [activeTagFilters, setActiveTagFilters] = useState<Set<string>>(new Set());
   const searchRef = useRef<HTMLInputElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const lastSelectedRef = useRef<string | null>(null);
-  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  useEffect(() => { saveJSON(FILTER_KEY, filter); }, [filter]);
-  useEffect(() => { saveSortMode(sortMode); }, [sortMode]);
-  useEffect(() => { saveJSON(ARCHIVE_OPEN_KEY, archiveOpen); }, [archiveOpen]);
-
+  // Other windows / components fire agentview:pins-changed when they
+  // toggle a pin — keep our local copy in sync so the "고정" group stays
+  // accurate without a manual remount.
   useEffect(() => {
-    const onPins = () => setPins(loadPins());
-    const onArchive = () => setArchived(loadArchive());
-    const onTags = () => {
-      setTagMap(loadTagsMap());
-      setSessionTags(loadSessionTags());
-    };
-    window.addEventListener('agentview:pins-changed', onPins);
-    window.addEventListener('agentview:archive-changed', onArchive);
-    window.addEventListener('agentview:tags-changed', onTags);
-    return () => {
-      window.removeEventListener('agentview:pins-changed', onPins);
-      window.removeEventListener('agentview:archive-changed', onArchive);
-      window.removeEventListener('agentview:tags-changed', onTags);
-    };
+    const onChange = () => setPins(loadPins());
+    window.addEventListener('agentview:pins-changed', onChange);
+    return () => window.removeEventListener('agentview:pins-changed', onChange);
   }, []);
 
   const togglePin = useCallback((sessionId: string) => {
@@ -264,15 +154,10 @@ export function SessionList({
     setContextMenu(null);
   }, []);
 
-  // Sidebar-scoped Ctrl/Cmd+K → focus search.
+  // Ctrl/Cmd+K anywhere → focus session search.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
-        // The CommandPalette also listens for Ctrl+K — if any modal is open
-        // it captures the event first. As a fallback (no palette), focus the
-        // sidebar search instead so the keystroke is still useful.
-        const palette = document.querySelector('.cmd-palette-dialog');
-        if (palette) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         searchRef.current?.focus();
         searchRef.current?.select();
@@ -282,6 +167,7 @@ export function SessionList({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Close context menu on any outside click or Escape.
   useEffect(() => {
     if (!contextMenu) return;
     const close = () => setContextMenu(null);
@@ -298,29 +184,13 @@ export function SessionList({
     };
   }, [contextMenu]);
 
-  useEffect(() => {
-    if (!sortMenuOpen && !historyOpen) return;
-    const close = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (t.closest('.session-list-sort-menu') || t.closest('.session-list-sort-btn')) return;
-      if (t.closest('.session-list-search-history')) return;
-      setSortMenuOpen(false);
-      setHistoryOpen(false);
-    };
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, [sortMenuOpen, historyOpen]);
-
   const counts = useMemo(
     () => ({
       all: sessions.length,
       active: sessions.filter(isActive).length,
       completed: sessions.filter(isCompleted).length,
-      error: sessions.filter(isErrorStatus).length,
-      waiting: sessions.filter(isWaitingStatus).length,
-      archive: sessions.filter((s) => archived.has(s.sessionId)).length
     }),
-    [sessions, archived]
+    [sessions]
   );
 
   const filtered = useMemo(() => {
@@ -328,146 +198,41 @@ export function SessionList({
       const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
       const preview = s.lastUserText ?? '';
       if (!matchesQuery(s, name, preview, query)) return false;
-      if (filter === 'active' && !isActive(s)) return false;
-      if (filter === 'completed' && !isCompleted(s)) return false;
-      if (filter === 'error' && !isErrorStatus(s)) return false;
-      if (filter === 'waiting' && !isWaitingStatus(s)) return false;
-      if (activeTagFilters.size > 0) {
-        const tags = sessionTags[s.sessionId] ?? [];
-        if (!tags.some((t) => activeTagFilters.has(t))) return false;
-      }
+      if (filter === 'active') return isActive(s);
+      if (filter === 'completed') return isCompleted(s);
       return true;
     });
-    return applySort(list, sortMode, renames);
-  }, [sessions, query, filter, renames, sortMode, activeTagFilters, sessionTags]);
+    return list.sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [sessions, query, filter, renames]);
 
-  // Bucket: archived → bottom; pinned → top; rest → time/manual groups.
-  const archivedList = useMemo(
-    () => filtered.filter((s) => archived.has(s.sessionId)),
-    [filtered, archived]
-  );
-  const visibleNonArchived = useMemo(
-    () => filtered.filter((s) => !archived.has(s.sessionId)),
-    [filtered, archived]
-  );
+  // Bucket sessions: pinned ones float to a separate "고정" group at the
+  // top, regardless of how recent they are; the rest fall back into
+  // today/yesterday/thisWeek/older.
   const pinnedList = useMemo(
-    () => visibleNonArchived.filter((s) => pins.has(s.sessionId)),
-    [visibleNonArchived, pins]
+    () => filtered.filter((s) => pins.has(s.sessionId)),
+    [filtered, pins]
   );
   const grouped = useMemo(() => {
     const map: Record<GroupKey, BgSession[]> = { today: [], yesterday: [], thisWeek: [], older: [] };
-    for (const s of visibleNonArchived) {
+    for (const s of filtered) {
       if (pins.has(s.sessionId)) continue;
       map[groupOf(s.updatedAt, now)].push(s);
     }
     return map;
-  }, [visibleNonArchived, now, pins]);
+  }, [filtered, now, pins]);
 
+  // Flat order for keyboard navigation: pinned first, then the time buckets.
   const flatOrder = useMemo(() => {
     const out: BgSession[] = [...pinnedList];
-    for (const k of GROUP_ORDER) {
-      if (collapsedGroups.has(k)) continue;
-      out.push(...grouped[k]);
-    }
-    if (archiveOpen) out.push(...archivedList);
+    for (const k of GROUP_ORDER) out.push(...grouped[k]);
     return out;
-  }, [grouped, pinnedList, collapsedGroups, archiveOpen, archivedList]);
-
-  const toggleGroup = (k: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      saveCollapsedGroups(next);
-      return next;
-    });
-  };
-
-  const onSelectRow = useCallback(
-    (s: BgSession, e?: React.MouseEvent) => {
-      const shift = !!e?.shiftKey;
-      const ctrl = !!(e?.ctrlKey || e?.metaKey);
-      if (shift && lastSelectedRef.current) {
-        // Shift-click: select range in flat order between last anchor and this row.
-        const ids = flatOrder.map((x) => x.sessionId);
-        const a = ids.indexOf(lastSelectedRef.current);
-        const b = ids.indexOf(s.sessionId);
-        if (a >= 0 && b >= 0) {
-          const [lo, hi] = a < b ? [a, b] : [b, a];
-          setSelectedIds((prev) => {
-            const next = new Set(prev);
-            for (let i = lo; i <= hi; i++) next.add(ids[i]);
-            return next;
-          });
-        }
-        return;
-      }
-      if (ctrl) {
-        setSelectedIds((prev) => {
-          const next = new Set(prev);
-          if (next.has(s.sessionId)) next.delete(s.sessionId);
-          else next.add(s.sessionId);
-          return next;
-        });
-        lastSelectedRef.current = s.sessionId;
-        return;
-      }
-      lastSelectedRef.current = s.sessionId;
-      setSelectedIds(new Set());
-      onSelect(s);
-    },
-    [flatOrder, onSelect]
-  );
-
-  // Multi-select bar action handlers.
-  const clearSelection = () => setSelectedIds(new Set());
-  const bulkArchive = () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    doArchive(ids);
-    setArchived(loadArchive());
-    clearSelection();
-  };
-  const bulkUnarchive = () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    doUnarchive(ids);
-    setArchived(loadArchive());
-    clearSelection();
-  };
-  const bulkDelete = async () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    if (!window.confirm(`${ids.length}개 세션을 삭제합니다. 되돌릴 수 없습니다.`)) return;
-    await window.av.sessions.deleteMany?.(ids).catch(() => undefined);
-    clearSelection();
-  };
-  const allSelectedArchived = useMemo(() => {
-    if (selectedIds.size === 0) return false;
-    for (const id of selectedIds) if (!archived.has(id)) return false;
-    return true;
-  }, [selectedIds, archived]);
-
-  const intersectionTags = useMemo(() => {
-    if (selectedIds.size === 0) return [] as string[];
-    const lists = Array.from(selectedIds).map((id) => sessionTags[id] ?? []);
-    if (lists.length === 0) return [] as string[];
-    return lists.reduce<string[]>(
-      (acc, cur) => acc.filter((t) => cur.includes(t)),
-      lists[0].slice()
-    );
-  }, [selectedIds, sessionTags]);
-
-  const applyTagsToSelection = (tagIds: string[]) => {
-    for (const id of selectedIds) setTagsOf(id, tagIds);
-    setSessionTags(loadSessionTags());
-    setTagMap(loadTagsMap());
-  };
+  }, [grouped, pinnedList]);
 
   const commitRename = useCallback(
     (sessionId: string) => {
       const trimmed = renameDraft.trim();
       saveRename(sessionId, trimmed || null);
+      // Best-effort server-side rename so `claude agents` shows the same label.
       window.av.sessions.renameJob?.(sessionId, trimmed || null).catch(() => undefined);
       setRenamingId(null);
       setRenameDraft('');
@@ -483,21 +248,6 @@ export function SessionList({
       setContextMenu(null);
     },
     [renames]
-  );
-
-  // Tab while renaming → save current and jump to the next row's rename.
-  const renameTabNext = useCallback(
-    (curId: string) => {
-      commitRename(curId);
-      const idx = flatOrder.findIndex((s) => s.sessionId === curId);
-      const next = flatOrder[idx + 1];
-      if (next) {
-        // Kick off rename on the next session — defer one frame so the
-        // commit above has time to dispatch the rename change event.
-        requestAnimationFrame(() => startRename(next));
-      }
-    },
-    [flatOrder, commitRename, startRename]
   );
 
   const onDelete = useCallback(
@@ -521,15 +271,7 @@ export function SessionList({
     navigator.clipboard.writeText(s.sessionId).catch(() => undefined);
   }, []);
 
-  const onArchiveSingle = useCallback((s: BgSession) => {
-    setContextMenu(null);
-    if (archived.has(s.sessionId)) doUnarchive([s.sessionId]);
-    else doArchive([s.sessionId]);
-    setArchived(loadArchive());
-  }, [archived]);
-
-  // Keyboard ↑/↓/Enter while the list has focus. scrollIntoView so the
-  // newly-selected row stays in view (#29).
+  // Keyboard ↑/↓/Enter while the list has focus.
   const onListKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (renamingId) return;
@@ -538,17 +280,11 @@ export function SessionList({
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         const next = flatOrder[Math.min(flatOrder.length - 1, Math.max(-1, idx) + 1)];
-        if (next) {
-          onSelect(next);
-          rowRefs.current.get(next.sessionId)?.scrollIntoView({ block: 'nearest' });
-        }
+        if (next) onSelect(next);
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         const prev = flatOrder[Math.max(0, idx - 1)];
-        if (prev) {
-          onSelect(prev);
-          rowRefs.current.get(prev.sessionId)?.scrollIntoView({ block: 'nearest' });
-        }
+        if (prev) onSelect(prev);
       } else if (e.key === 'Enter') {
         const cur = flatOrder.find((s) => s.sessionId === selectedId);
         if (cur) onSelect(cur);
@@ -557,36 +293,10 @@ export function SessionList({
     [flatOrder, renamingId, onSelect, selectedId]
   );
 
-  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape') {
-      setQuery('');
-      setHistoryOpen(false);
-      (e.target as HTMLInputElement).blur();
-    } else if (e.key === 'Enter') {
-      if (query.trim()) setSearchHistory(pushSearchHistory(query));
-      setHistoryOpen(false);
-    } else if (e.key === 'ArrowDown' && historyOpen) {
-      e.preventDefault();
-      // Move focus to the first history item
-      const first = document.querySelector<HTMLElement>('.session-list-search-history button');
-      first?.focus();
-    }
-  };
-
-  const allTags = useMemo(() => Object.values(tagMap), [tagMap]);
-  const toggleTagFilter = (id: string) => {
-    setActiveTagFilters((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const emptyText =
-    query || filter !== 'all' || activeTagFilters.size > 0
+    query || filter !== 'all'
       ? '일치하는 세션 없음'
-      : '세션 없음 — 위 "+ 새 작업"으로 시작하세요';
+      : '세션 없음 — 위 “+ 새 작업”으로 시작하세요';
 
   const renderRow = (s: BgSession): React.ReactElement => {
     const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
@@ -594,18 +304,11 @@ export function SessionList({
     const previewSlice = preview.length > 60 ? preview.slice(0, 60) + '…' : preview;
     const isRenaming = renamingId === s.sessionId;
     const isPinned = pins.has(s.sessionId);
-    const isMultiSelected = selectedIds.has(s.sessionId);
-    const tags = sessionTags[s.sessionId] ?? [];
-    const projectName = projectNameOf(s.cwd ?? '');
     return (
       <div
         key={s.sessionId}
-        ref={(el) => {
-          if (el) rowRefs.current.set(s.sessionId, el);
-          else rowRefs.current.delete(s.sessionId);
-        }}
-        className={`session-list-item ${s.sessionId === selectedId ? 'selected' : ''} ${isMultiSelected ? 'multi-selected' : ''}`}
-        onClick={(e) => !isRenaming && onSelectRow(s, e)}
+        className={`session-list-item ${s.sessionId === selectedId ? 'selected' : ''}`}
+        onClick={() => !isRenaming && onSelect(s)}
         onDoubleClick={(e) => {
           e.preventDefault();
           startRename(s);
@@ -614,12 +317,11 @@ export function SessionList({
           e.preventDefault();
           setContextMenu({ x: e.clientX, y: e.clientY, session: s });
         }}
-        role="option"
-        aria-selected={s.sessionId === selectedId || isMultiSelected}
+        role="button"
         tabIndex={-1}
         title={s.cwd ? `${name}\n${s.cwd}` : name}
       >
-        <span className={`session-list-dot ${dotClass(s)}`} aria-hidden="true" />
+        <span className={`session-list-dot ${dotClass(s)}`} />
         <span className="session-list-item-body">
           {isRenaming ? (
             <input
@@ -633,9 +335,6 @@ export function SessionList({
                 if (e.key === 'Enter') {
                   e.preventDefault();
                   commitRename(s.sessionId);
-                } else if (e.key === 'Tab') {
-                  e.preventDefault();
-                  renameTabNext(s.sessionId);
                 } else if (e.key === 'Escape') {
                   setRenamingId(null);
                   setRenameDraft('');
@@ -651,87 +350,26 @@ export function SessionList({
               {highlightMatch(name, query)}
             </span>
           )}
-          {tags.length > 0 && (
-            <span className="session-list-tags" aria-label="태그">
-              {tags.map((tid) => {
-                const t = tagMap[tid];
-                if (!t) return null;
-                return (
-                  <span key={tid} className="session-list-tag" style={{ background: t.color }} title={t.name}>
-                    {t.name}
-                  </span>
-                );
-              })}
-            </span>
-          )}
           <span className="session-list-sub">
             <span className={`session-list-status ${dotClass(s)}`}>{statusLabel(s)}</span>
-            {projectName && (
-              <span className="session-list-project" title={s.cwd ?? ''}>
-                · {projectName}
-              </span>
-            )}
             {previewSlice && (
               <span className="session-list-preview" title={preview}>
                 · {highlightMatch(previewSlice, query)}
               </span>
             )}
-            <span className="session-list-time" title={new Date(s.updatedAt).toLocaleString('ko-KR')}>
-              {formatRelative(s.updatedAt, now)}
-            </span>
+            <span className="session-list-time">{formatRelative(s.updatedAt, now)}</span>
           </span>
         </span>
-        {/* researcher item #47 — quick-resume icon shown on hover; clicking
-            also routes through onSelect so the side panel opens. */}
-        {s.alive && (
-          <button
-            type="button"
-            className="session-list-resume-icon"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect(s);
-            }}
-            title="이 세션 열기"
-            aria-label="세션 열기"
-          >▶</button>
-        )}
       </div>
     );
   };
 
   return (
-    <div className="session-list" onKeyDown={onListKeyDown} ref={containerRef} tabIndex={0} role="listbox" aria-label="세션 목록">
+    <div className="session-list" onKeyDown={onListKeyDown} ref={containerRef} tabIndex={0}>
       <div className="session-list-head">
         <button type="button" className="btn primary session-list-new" onClick={onNewClick}>
           ＋ 새 작업
         </button>
-        <button
-          type="button"
-          className="session-list-sort-btn"
-          title="정렬 모드"
-          aria-label="정렬 모드"
-          onClick={() => setSortMenuOpen((v) => !v)}
-        >
-          ⇅ {SORT_LABELS[sortMode]}
-        </button>
-        {sortMenuOpen && (
-          <div className="session-list-sort-menu" role="menu">
-            {(['updated', 'created', 'name'] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                role="menuitem"
-                className={sortMode === m ? 'active' : ''}
-                onClick={() => {
-                  setSortMode(m);
-                  setSortMenuOpen(false);
-                }}
-              >
-                {SORT_LABELS[m]}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
       <div className="session-list-search-row">
         <span className="session-list-search-icon" aria-hidden="true">⌕</span>
@@ -739,12 +377,15 @@ export function SessionList({
           ref={searchRef}
           type="text"
           className="session-list-search"
-          placeholder="검색 (Ctrl+K) · 이름·폴더·미리보기"
+          placeholder="검색 (Ctrl+K)"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => setHistoryOpen(searchHistory.length > 0 && !query)}
-          onBlur={() => window.setTimeout(() => setHistoryOpen(false), 120)}
-          onKeyDown={onSearchKey}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setQuery('');
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
           aria-label="세션 검색"
         />
         {query && (
@@ -754,133 +395,58 @@ export function SessionList({
             onClick={() => setQuery('')}
             aria-label="검색어 지우기"
             title="검색어 지우기 (Esc)"
-          >×</button>
-        )}
-        {historyOpen && (
-          <div className="session-list-search-history" role="listbox" aria-label="검색 기록">
-            {searchHistory.map((h) => (
-              <button
-                key={h}
-                type="button"
-                role="option"
-                aria-selected={false}
-                className="session-list-search-history-item"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setQuery(h);
-                  setHistoryOpen(false);
-                }}
-              >
-                <span>↺ {h}</span>
-              </button>
-            ))}
-            {searchHistory.length === 0 && (
-              <div className="session-list-search-history-empty">최근 검색 없음</div>
-            )}
-          </div>
+          >
+            ×
+          </button>
         )}
       </div>
       <div className="session-list-filters" role="tablist">
-        {FILTER_ORDER.map((f) => (
-          <button
-            key={f}
-            type="button"
-            className={`session-list-filter ${filter === f ? 'active' : ''}`}
-            onClick={() => setFilter(f)}
-            aria-pressed={filter === f}
-          >
-            {FILTER_LABELS[f]} <span className="session-list-filter-count">{counts[f]}</span>
-          </button>
-        ))}
+        <button
+          type="button"
+          className={`session-list-filter ${filter === 'all' ? 'active' : ''}`}
+          onClick={() => setFilter('all')}
+          aria-pressed={filter === 'all'}
+        >
+          모두 <span className="session-list-filter-count">{counts.all}</span>
+        </button>
+        <button
+          type="button"
+          className={`session-list-filter ${filter === 'active' ? 'active' : ''}`}
+          onClick={() => setFilter('active')}
+          aria-pressed={filter === 'active'}
+        >
+          실행 중 <span className="session-list-filter-count">{counts.active}</span>
+        </button>
+        <button
+          type="button"
+          className={`session-list-filter ${filter === 'completed' ? 'active' : ''}`}
+          onClick={() => setFilter('completed')}
+          aria-pressed={filter === 'completed'}
+        >
+          완료 <span className="session-list-filter-count">{counts.completed}</span>
+        </button>
       </div>
-      {allTags.length > 0 && (
-        <div className="session-list-tag-filters" aria-label="태그 필터">
-          {allTags.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`session-list-tag-filter ${activeTagFilters.has(t.id) ? 'on' : ''}`}
-              style={{
-                borderColor: activeTagFilters.has(t.id) ? t.color : 'transparent',
-                background: activeTagFilters.has(t.id) ? t.color : 'transparent'
-              }}
-              onClick={() => toggleTagFilter(t.id)}
-              aria-pressed={activeTagFilters.has(t.id)}
-            >
-              {t.name}
-            </button>
-          ))}
-          {activeTagFilters.size > 0 && (
-            <button
-              type="button"
-              className="session-list-tag-filter clear"
-              onClick={() => setActiveTagFilters(new Set())}
-              title="태그 필터 모두 해제"
-            >
-              초기화
-            </button>
-          )}
-        </div>
-      )}
       <div className="session-list-body">
         {flatOrder.length === 0 && (
           <div className="session-list-empty">{emptyText}</div>
         )}
         {pinnedList.length > 0 && (
           <div className="session-list-group">
-            <div className="session-list-group-header">★ 고정 ({pinnedList.length})</div>
-            {pinnedList.map(renderRow)}
+            <div className="session-list-group-header">★ 고정</div>
+            {pinnedList.map((s) => renderRow(s))}
           </div>
         )}
         {GROUP_ORDER.map((g) => {
           const items = grouped[g];
           if (items.length === 0) return null;
-          const isCollapsed = collapsedGroups.has(g);
           return (
             <div key={g} className="session-list-group">
-              <button
-                type="button"
-                className="session-list-group-header collapsible"
-                onClick={() => toggleGroup(g)}
-                aria-expanded={!isCollapsed}
-              >
-                <span className="session-list-group-caret" aria-hidden="true">{isCollapsed ? '▸' : '▾'}</span>
-                {GROUP_LABELS[g]} <span className="session-list-group-count">({items.length})</span>
-              </button>
-              {!isCollapsed && items.map(renderRow)}
+              <div className="session-list-group-header">{GROUP_LABELS[g]}</div>
+              {items.map((s) => renderRow(s))}
             </div>
           );
         })}
-        {counts.archive > 0 && (
-          <div className="session-list-group">
-            <button
-              type="button"
-              className="session-list-group-header collapsible archive-toggle"
-              onClick={() => setArchiveOpen((v) => !v)}
-              aria-expanded={archiveOpen}
-            >
-              <span className="session-list-group-caret" aria-hidden="true">{archiveOpen ? '▾' : '▸'}</span>
-              📦 아카이브 <span className="session-list-group-count">({counts.archive})</span>
-            </button>
-            {archiveOpen && archivedList.map(renderRow)}
-          </div>
-        )}
       </div>
-      <SessionListMultiBar
-        count={selectedIds.size}
-        onClear={clearSelection}
-        onDelete={bulkDelete}
-        onArchive={bulkArchive}
-        onUnarchive={bulkUnarchive}
-        onTag={() => setTagDialogOpen(true)}
-        allArchived={allSelectedArchived}
-      />
-      <SessionListTagDialog
-        open={tagDialogOpen}
-        appliedTagIds={intersectionTags}
-        onClose={() => setTagDialogOpen(false)}
-        onApply={applyTagsToSelection}
-      />
       {contextMenu && (
         <div
           className="session-list-menu"
@@ -906,24 +472,6 @@ export function SessionList({
             onClick={() => startRename(contextMenu.session)}
           >
             ✎ 이름 변경
-          </button>
-          <button
-            type="button"
-            className="session-list-menu-item"
-            onClick={() => {
-              setSelectedIds(new Set([contextMenu.session.sessionId]));
-              setTagDialogOpen(true);
-              setContextMenu(null);
-            }}
-          >
-            🏷 태그 지정
-          </button>
-          <button
-            type="button"
-            className="session-list-menu-item"
-            onClick={() => onArchiveSingle(contextMenu.session)}
-          >
-            {archived.has(contextMenu.session.sessionId) ? '⤴ 아카이브 해제' : '📦 아카이브'}
           </button>
           <button
             type="button"

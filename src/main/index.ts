@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, protocol, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, protocol, shell } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -106,78 +106,10 @@ function resolveIconPath(): string {
     : join(__dirname, '../../resources', file);
 }
 
-// researcher item #359 — remember window position + size between
-// launches so the user doesn't have to drag/resize on every startup.
-// Stored in userData/window-state.json, written on close/resize with
-// a small debounce so we don't hammer the disk while the user drags.
-interface WindowState {
-  x?: number;
-  y?: number;
-  width: number;
-  height: number;
-  isMaximized?: boolean;
-}
-
-function windowStatePath(): string {
-  return join(app.getPath('userData'), 'window-state.json');
-}
-
-function loadWindowState(): WindowState | null {
-  try {
-    const raw = require('node:fs').readFileSync(windowStatePath(), 'utf8');
-    const parsed = JSON.parse(raw) as WindowState;
-    if (typeof parsed.width === 'number' && typeof parsed.height === 'number'
-        && parsed.width >= 600 && parsed.height >= 400) {
-      return parsed;
-    }
-  } catch {
-    /* file missing or corrupt — fall back to defaults */
-  }
-  return null;
-}
-
-function saveWindowState(state: WindowState): void {
-  try {
-    require('node:fs').writeFileSync(windowStatePath(), JSON.stringify(state), 'utf8');
-  } catch {
-    /* ignore disk errors — startup still works without state */
-  }
-}
-
-/**
- * Validate that the saved window bounds still fall inside *some* connected
- * display's workArea. Without this, removing the external monitor that was
- * active when the window was last closed leaves the window off-screen on the
- * next launch — researcher item #359 follow-up (codex review P2).
- */
-function isOnScreen(state: WindowState): boolean {
-  if (typeof state.x !== 'number' || typeof state.y !== 'number') return true;
-  try {
-    const displays = screen.getAllDisplays();
-    for (const d of displays) {
-      const wa = d.workArea;
-      const cx = state.x + state.width / 2;
-      const cy = state.y + state.height / 2;
-      if (cx >= wa.x && cx <= wa.x + wa.width && cy >= wa.y && cy <= wa.y + wa.height) {
-        return true;
-      }
-    }
-  } catch {
-    // screen module unavailable on this platform — assume on-screen so we
-    // don't strand the user without their saved bounds.
-    return true;
-  }
-  return false;
-}
-
 function createWindow(): BrowserWindow {
-  const saved = loadWindowState();
-  const useSavedPos = saved ? isOnScreen(saved) : false;
   const win = new BrowserWindow({
-    width: saved?.width ?? 1440,
-    height: saved?.height ?? 900,
-    x: useSavedPos ? saved?.x : undefined,
-    y: useSavedPos ? saved?.y : undefined,
+    width: 1440,
+    height: 900,
     // Min size sized for the smallest layout the renderer still reflows
     // into: cards grid keeps at least one 290px column, the composer
     // chip strip wraps to 2-3 lines, and the WindowChrome (32px) +
@@ -214,37 +146,7 @@ function createWindow(): BrowserWindow {
   win.on('unmaximize', sendMaxState);
   win.on('restore', sendMaxState);
 
-  win.once('ready-to-show', () => {
-    if (saved?.isMaximized) win.maximize();
-    win.show();
-  });
-
-  // Persist bounds + maximize state. Debounce resize/move so dragging
-  // the window doesn't burn disk writes.
-  let saveTimer: NodeJS.Timeout | null = null;
-  const persistBounds = () => {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      if (win.isDestroyed()) return;
-      const isMax = win.isMaximized();
-      // When maximized, store the *normal* bounds so unmaximize restores
-      // to a sensible window — getNormalBounds() handles this for us.
-      const b = isMax ? win.getNormalBounds() : win.getBounds();
-      saveWindowState({ x: b.x, y: b.y, width: b.width, height: b.height, isMaximized: isMax });
-    }, 300);
-  };
-  win.on('resize', persistBounds);
-  win.on('move', persistBounds);
-  win.on('maximize', persistBounds);
-  win.on('unmaximize', persistBounds);
-  win.on('close', () => {
-    if (saveTimer) clearTimeout(saveTimer);
-    if (!win.isDestroyed()) {
-      const isMax = win.isMaximized();
-      const b = isMax ? win.getNormalBounds() : win.getBounds();
-      saveWindowState({ x: b.x, y: b.y, width: b.width, height: b.height, isMaximized: isMax });
-    }
-  });
+  win.once('ready-to-show', () => win.show());
 
   // Anchors in chat messages have target="_blank". When the renderer asks
   // the runtime to open one, route it through the OS browser instead of

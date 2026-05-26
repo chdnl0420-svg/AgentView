@@ -34,8 +34,6 @@ import { LinkifiedText } from './LinkifiedText';
 import { ContextDonut } from './ContextDonut';
 import { statusLabel, formatDurationShort, formatTokens } from './SessionDetailFormatters';
 import { renderMessages, QueuedBubble } from './SessionDetailBubbles';
-import { MessageSearch } from './MessageSearch';
-import { exportConversation, copyConversation } from '../lib/exportSession';
 
 // Path click + context menu shared callbacks. Components below the bubbles
 // thread these down so a single FilePreviewModal / PathContextMenu instance
@@ -146,45 +144,6 @@ export function SessionDetail({
   useEffect(() => {
     setCrashDismissed(false);
   }, [session.sessionId]);
-
-  // ---- In-session message search (researcher #79 / #80 / #182) ----
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
-  const [exportOpen, setExportOpen] = useState(false);
-
-  useEffect(() => {
-    if (!exportOpen) return;
-    const close = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (t.closest('.detail-export-menu') || t.closest('.detail-export-btn')) return;
-      setExportOpen(false);
-    };
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, [exportOpen]);
-
-  // Ctrl+F → open in-session search (scoped to the detail view; only when
-  // the user isn't already typing into another text input).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
-        const target = e.target as HTMLElement | null;
-        // Skip when the user is in the composer / a different textarea/input;
-        // they probably want browser native find or composer-local search.
-        const inComposer = target?.closest?.('.input-bar');
-        if (inComposer) return;
-        e.preventDefault();
-        setSearchOpen(true);
-      } else if (e.key === 'F3') {
-        e.preventDefault();
-        if (e.shiftKey) setSearchActiveIdx((i) => Math.max(0, i - 1));
-        else setSearchActiveIdx((i) => i + 1);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
 
   // ---- Top-panel badge dropdowns + transient toast for "다음 메시지부터 적용" ----
   const [permDropdownOpen, setPermDropdownOpen] = useState(false);
@@ -326,56 +285,6 @@ export function SessionDetail({
   const elapsedMs = turnInfo.startedAt ? tick - turnInfo.startedAt : 0;
   const elapsedLabel = elapsedMs > 0 ? formatDurationShort(elapsedMs) : '';
   const totalTokens = turnInfo.inputTokens + turnInfo.outputTokens;
-
-  // Hits for in-session message search. Each entry is the index into
-  // data.messages so we can scroll the matching message into view.
-  const searchHits = useMemo<number[]>(() => {
-    if (!searchOpen || !searchQuery.trim() || !data?.messages) return [];
-    const q = searchQuery.toLowerCase();
-    const hits: number[] = [];
-    data.messages.forEach((m, i) => {
-      if (m.text && m.text.toLowerCase().includes(q)) hits.push(i);
-      else if (m.toolName && m.toolName.toLowerCase().includes(q)) hits.push(i);
-    });
-    return hits;
-  }, [searchOpen, searchQuery, data?.messages]);
-
-  // Reset active hit when query changes; clamp when results shrink.
-  useEffect(() => {
-    setSearchActiveIdx(0);
-  }, [searchQuery]);
-  useEffect(() => {
-    if (searchHits.length === 0) return;
-    if (searchActiveIdx >= searchHits.length) setSearchActiveIdx(searchHits.length - 1);
-    if (searchActiveIdx < 0) setSearchActiveIdx(0);
-  }, [searchHits.length, searchActiveIdx]);
-
-  // Scroll the active hit into view + highlight via a transient CSS class.
-  // Also fires an `agentview:search-target` event so collapsed tool groups
-  // can auto-expand when the match lives inside them (codex review P3).
-  useEffect(() => {
-    if (!searchOpen || searchHits.length === 0 || !data) return;
-    const messageIdx = searchHits[Math.min(searchActiveIdx, searchHits.length - 1)];
-    const uuid = data.messages[messageIdx]?.uuid;
-    if (!uuid) return;
-    window.dispatchEvent(new CustomEvent('agentview:search-target', { detail: { uuid } }));
-    // Defer one frame so any group that auto-expands has time to render the
-    // matching node before we attempt scrollIntoView.
-    const frame = requestAnimationFrame(() => {
-      // Prefer direct uuid match; fall back to group container that lists
-      // this uuid in `data-group-msg-uuids`.
-      let el = document.querySelector<HTMLElement>(`[data-msg-uuid="${uuid}"]`);
-      if (!el) {
-        el = document.querySelector<HTMLElement>(`[data-group-msg-uuids*="${uuid}"]`);
-      }
-      if (el) {
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        el.classList.add('msg-search-target');
-        window.setTimeout(() => el?.classList.remove('msg-search-target'), 1400);
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [searchHits, searchActiveIdx, searchOpen, data]);
 
   // The most-recent UNANSWERED AskUserQuestion tool_use in the conversation.
   // "Unanswered" = no tool_result with a matching toolUseId appears AFTER it.
@@ -989,72 +898,6 @@ export function SessionDetail({
             >
               👤 내 메시지만
             </button>
-            <button
-              type="button"
-              className="filter-toggle"
-              title="이 세션 내 메시지 검색 (Ctrl+F)"
-              onClick={() => setSearchOpen((v) => !v)}
-            >
-              🔍 검색
-            </button>
-            <button
-              type="button"
-              className="filter-toggle detail-export-btn"
-              title="대화 내보내기"
-              onClick={() => setExportOpen((v) => !v)}
-            >
-              ⤓ 내보내기
-            </button>
-            {exportOpen && (
-              <div className="detail-export-menu" role="menu">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setExportOpen(false);
-                    if (!data) return;
-                    exportConversation(data, { format: 'markdown', displayName: displayName });
-                  }}
-                >📝 Markdown 파일</button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setExportOpen(false);
-                    if (!data) return;
-                    exportConversation(data, { format: 'json', displayName: displayName });
-                  }}
-                >🗎 JSON 파일</button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={async () => {
-                    setExportOpen(false);
-                    if (!data) return;
-                    try {
-                      await copyConversation(data, { format: 'markdown', displayName: displayName });
-                      setBadgeToast('Markdown 으로 클립보드에 복사됨');
-                    } catch {
-                      /* clipboard blocked */
-                    }
-                  }}
-                >⧉ Markdown 으로 복사</button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={async () => {
-                    setExportOpen(false);
-                    if (!data) return;
-                    try {
-                      await copyConversation(data, { format: 'json', displayName: displayName });
-                      setBadgeToast('JSON 으로 클립보드에 복사됨');
-                    } catch {
-                      /* clipboard blocked */
-                    }
-                  }}
-                >⧉ JSON 으로 복사</button>
-              </div>
-            )}
           </div>
           {badgeToast && (
             <div className="badge-toast" role="status">{badgeToast}</div>
@@ -1155,21 +998,6 @@ export function SessionDetail({
           )}
         </div>
       </header>
-
-      <MessageSearch
-        open={searchOpen}
-        initialQuery={searchQuery}
-        total={searchHits.length}
-        activeIdx={searchActiveIdx}
-        onQueryChange={(q) => setSearchQuery(q)}
-        onNext={() => setSearchActiveIdx((i) => (searchHits.length === 0 ? 0 : (i + 1) % searchHits.length))}
-        onPrev={() => setSearchActiveIdx((i) => (searchHits.length === 0 ? 0 : (i - 1 + searchHits.length) % searchHits.length))}
-        onClose={() => {
-          setSearchOpen(false);
-          setSearchQuery('');
-          setSearchActiveIdx(0);
-        }}
-      />
 
       {!isAtBottom && data && data.messages.length > 0 && (
         <button
