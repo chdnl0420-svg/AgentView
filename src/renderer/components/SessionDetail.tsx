@@ -1306,8 +1306,11 @@ export function SessionDetail({
               👤 내 메시지만
             </button>
             <div className="footer-right-group">
-              {modelLabel && (
-                <div className="dropdown-anchor">
+              {/* 모델 버튼 — modelLabel 이 null (rawModel 없음) 일 때도 항상
+                  표시해 사용자가 바로 모델을 고를 수 있게 한다. 이전에는
+                  conditional 로 숨어 있어 새 세션에서 "버튼이 어디 있냐"
+                  는 혼동이 있었음. */}
+              <div className="dropdown-anchor">
                   <button
                     type="button"
                     className="model-tag clickable"
@@ -1319,7 +1322,7 @@ export function SessionDetail({
                       setModelDropdownOpen((v) => !v);
                     }}
                   >
-                    🧠 {modelLabel}
+                    🧠 {modelLabel || '모델 선택'}
                     <span className="caret">▾</span>
                   </button>
                   {modelDropdownOpen && (
@@ -1382,7 +1385,6 @@ export function SessionDetail({
                     </div>
                   )}
                 </div>
-              )}
               <button
                 ref={contextBtnRef}
                 type="button"
