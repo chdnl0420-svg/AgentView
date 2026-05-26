@@ -89,6 +89,15 @@ interface QuickConvSummary {
   lastUserText: string;
   lastAssistantText: string;
   lastActivity: number;
+  /**
+   * true 면 jsonl 의 마지막 메시지가 사용자 응답을 기다리는 상태
+   * (claude 가 턴을 끝낸 assistant text 메시지) 임을 의미. avd daemon
+   * 의 catalog 는 session 이 alive 한 동안 status='running' 만
+   * 유지하기 때문에, 렌더러가 실제 idle 인지 판단할 보조 신호로 사용.
+   * 마지막 메시지가 user 거나 assistant 라도 tool_use 가 포함된
+   * (tool_result 대기) 경우 false.
+   */
+  turnIdle: boolean;
 }
 
 async function summarizeConversation(filePath: string): Promise<QuickConvSummary> {
@@ -98,7 +107,8 @@ async function summarizeConversation(filePath: string): Promise<QuickConvSummary
     firstUserText: '',
     lastUserText: '',
     lastAssistantText: '',
-    lastActivity: 0
+    lastActivity: 0,
+    turnIdle: false
   };
   try {
     const s = await fs.stat(filePath);
@@ -114,14 +124,35 @@ async function summarizeConversation(filePath: string): Promise<QuickConvSummary
       const lines = text.split(/\r?\n/).filter(Boolean);
       const usable = start === 0 ? lines : lines.slice(1);
       summary.messageCount = usable.length;
+      // turnIdle: jsonl 의 가장 마지막 *message-bearing* 라인이 assistant
+      // 의 text-only 응답일 때만 true. tool_use 가 포함된 assistant 거나
+      // user 메시지면 false (claude 가 다음 처리 중).
       for (let i = usable.length - 1; i >= 0; i--) {
         try {
           const obj = JSON.parse(usable[i]);
           const msg = obj?.message;
-          if (msg?.role === 'assistant' && !summary.lastAssistantText) {
+          if (!msg?.role) continue;
+          // 첫 만난 message-bearing 라인이 가장 마지막 메시지 — 여기서
+          // turnIdle 한 번만 판정.
+          if (summary.lastUserText === '' && summary.lastAssistantText === '') {
+            const role = msg.role;
+            const content = msg.content;
+            let hasToolUse = false;
+            let hasText = false;
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block?.type === 'tool_use') hasToolUse = true;
+                if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) hasText = true;
+              }
+            } else if (typeof content === 'string' && content.trim()) {
+              hasText = true;
+            }
+            summary.turnIdle = role === 'assistant' && hasText && !hasToolUse;
+          }
+          if (msg.role === 'assistant' && !summary.lastAssistantText) {
             summary.lastAssistantText = extractFirstText(msg);
           }
-          if (msg?.role === 'user' && !summary.lastUserText) {
+          if (msg.role === 'user' && !summary.lastUserText) {
             summary.lastUserText = extractFirstText(msg);
           }
           if (summary.lastUserText && summary.lastAssistantText) break;
@@ -283,6 +314,7 @@ async function avdRecordToSession(
     session.messageCount = summary.messageCount;
     session.lastUserText = summary.lastUserText;
     session.lastAssistantText = summary.lastAssistantText;
+    session.turnIdle = summary.turnIdle;
     if (summary.lastActivity > session.updatedAt) updatedAt = summary.lastActivity;
     session.updatedAt = updatedAt;
     if (!catalogName) {
@@ -373,7 +405,8 @@ export async function readSessionFromMetaPath(filePath: string): Promise<BgSessi
       conversationSize: convSummary?.size ?? 0,
       messageCount: convSummary?.messageCount,
       lastUserText: convSummary?.lastUserText,
-      lastAssistantText: convSummary?.lastAssistantText
+      lastAssistantText: convSummary?.lastAssistantText,
+      turnIdle: convSummary?.turnIdle
     };
   } catch {
     return null;

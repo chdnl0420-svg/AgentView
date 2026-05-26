@@ -127,6 +127,10 @@ function projectKey(s: BgSession): string {
 
 function dotClass(s: BgSession): string {
   if (!s.alive) return s.status === 'completed' ? 'completed' : s.status === 'crashed' ? 'crashed' : 'finished';
+  // avd catalog 가 alive 한 동안 'running' 만 유지하므로 jsonl 의 마지막
+  // 메시지가 assistant text-only (turnIdle) 면 effective 는 'waiting' 으로
+  // 표시 — 사용자 입장에선 응답 끝나고 대기 중임이 명확해짐.
+  if (s.status === 'running' && s.turnIdle) return 'waiting';
   return s.status === 'running' ? 'running' : 'waiting';
 }
 

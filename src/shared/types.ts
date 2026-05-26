@@ -38,6 +38,13 @@ export interface BgSession {
   lastUserText?: string;
   lastAssistantText?: string;
   backend?: SessionBackend;
+  /**
+   * true 면 jsonl 의 마지막 메시지가 assistant text-only (tool_use 없음)
+   * 라서 사용자 응답을 기다리는 상태. avd daemon catalog 가 alive 한
+   * 동안 status='running' 만 유지하므로 렌더러가 effective status 를
+   * 계산할 때 이 플래그를 보고 'idle' 로 표시 가능.
+   */
+  turnIdle?: boolean;
 }
 
 export interface ScanSessionsResult {

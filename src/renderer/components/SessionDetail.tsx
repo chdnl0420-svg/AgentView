@@ -803,14 +803,24 @@ export function SessionDetail({
         <div className="title">
           <div className="title-row">
             {(() => {
+              // avd catalog 는 alive 한 동안 status='running' 만 유지하므로
+              // 실제 effective status 는 turnIdle (jsonl 마지막이 assistant
+              // text-only) 신호로 보정한다. claude 답변이 끝난 뒤에도
+              // "실행 중" 으로만 보이던 회귀를 막음.
+              const effective =
+                session.status === 'running' && session.turnIdle
+                  ? 'waiting'
+                  : session.status;
+              const effectiveSession =
+                effective === session.status ? session : { ...session, status: effective };
+              const base = statusLabel(effectiveSession);
               // 'waiting' (claude harness 가 사용자 입력을 기다림) 일 때 막연한
               // '입력 대기' 대신 무엇을 기다리는지 부제로 surface 한다.
               //   - 권한 모달이 떠 있음 → "권한 응답 대기"
               //   - AskUserQuestion 떠 있음 → "질문 응답 대기"
               //   - 그 외 → "사용자 입력 대기"
-              const base = statusLabel(session);
               let extra = '';
-              if (session.status === 'waiting') {
+              if (effective === 'waiting') {
                 if (pendingPrompt) extra = '권한 응답 대기';
                 else if (pendingAsk) extra = '질문 응답 대기';
                 else extra = '사용자 입력 대기';
@@ -819,7 +829,7 @@ export function SessionDetail({
               const tooltip = extra ? `${base} — ${extra}` : base;
               return (
                 <span
-                  className={`status-tag ${session.status}`}
+                  className={`status-tag ${effective}`}
                   title={tooltip}
                   aria-label={`상태: ${tooltip}`}
                 >
