@@ -207,10 +207,8 @@ function truncate(s: string, n: number): string {
 }
 
 function classifyStatus(rawStatus: string | undefined, alive: boolean): SessionStatus {
-  if (!alive) {
-    if ((rawStatus ?? '').toLowerCase() === 'crashed') return 'crashed';
-    return 'finished';
-  }
+  // 비정상 종료(crashed/error)도 사용자 관점에서는 그냥 '종료' 로 노출.
+  if (!alive) return 'finished';
   switch ((rawStatus ?? '').toLowerCase()) {
     case 'idle':
       return 'idle';
@@ -223,7 +221,7 @@ function classifyStatus(rawStatus: string | undefined, alive: boolean): SessionS
       return 'waiting';
     case 'crashed':
     case 'error':
-      return 'crashed';
+      return 'finished';
     default:
       return 'idle';
   }

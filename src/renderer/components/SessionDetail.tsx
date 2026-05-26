@@ -139,12 +139,6 @@ export function SessionDetail({
     });
   };
 
-  // ---- Crash banner dismiss (resets per session) ----
-  const [crashDismissed, setCrashDismissed] = useState(false);
-  useEffect(() => {
-    setCrashDismissed(false);
-  }, [session.sessionId]);
-
   // ---- Top-panel badge dropdowns + transient toast for "다음 메시지부터 적용" ----
   const [permDropdownOpen, setPermDropdownOpen] = useState(false);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -885,12 +879,6 @@ export function SessionDetail({
           </div>
           {badgeToast && (
             <div className="badge-toast" role="status">{badgeToast}</div>
-          )}
-          {session.status === 'crashed' && !crashDismissed && (
-            <div className="crash-banner" role="alert">
-              <span>⚠ 에이전트가 비정상 종료되었습니다. 마지막 응답을 확인하세요.</span>
-              <button type="button" className="x" onClick={() => setCrashDismissed(true)} aria-label="닫기">×</button>
-            </div>
           )}
           {contextPanelOpen && (
             <>
