@@ -12,6 +12,7 @@ import {
 const RENAMES_KEY = 'sessionRenames';
 const PINS_KEY = 'sessionPins';
 const FILTERS_KEY = 'sessionList.filters';
+const COLLAPSED_GROUPS_KEY = 'sessionList.collapsedGroups';
 
 function loadPins(): Set<string> {
   return new Set(loadJSON<string[]>(PINS_KEY, []));
@@ -171,6 +172,19 @@ export function SessionList({
   const [filterAnchor, setFilterAnchor] = useState<DOMRect | null>(null);
   const filterTriggerRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => { saveJSON(FILTERS_KEY, filters); }, [filters]);
+  // 그룹 collapse 상태 — bucket.key 를 키로 저장.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
+    new Set(loadJSON<string[]>(COLLAPSED_GROUPS_KEY, []))
+  );
+  const toggleGroupCollapsed = useCallback((key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveJSON(COLLAPSED_GROUPS_KEY, Array.from(next));
+      return next;
+    });
+  }, []);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; session: BgSession } | null>(null);
@@ -299,11 +313,15 @@ export function SessionList({
   }, [filtered, pins, filters.groupBy, now]);
 
   // Flat order for keyboard navigation: pinned first, then bucket order.
+  // Collapsed groups are skipped so ↑/↓ navigation matches what the user sees.
   const flatOrder = useMemo(() => {
     const out: BgSession[] = [...pinnedList];
-    for (const b of buckets) out.push(...b.items);
+    for (const b of buckets) {
+      if (collapsedGroups.has(b.key)) continue;
+      out.push(...b.items);
+    }
     return out;
-  }, [buckets, pinnedList]);
+  }, [buckets, pinnedList, collapsedGroups]);
 
   const commitRename = useCallback(
     (sessionId: string) => {
@@ -522,12 +540,27 @@ export function SessionList({
             {pinnedList.map((s) => renderRow(s))}
           </div>
         )}
-        {buckets.map((b) => (
-          <div key={b.key} className="session-list-group">
-            <div className="session-list-group-header">{b.label}</div>
-            {b.items.map((s) => renderRow(s))}
-          </div>
-        ))}
+        {buckets.map((b) => {
+          const isCollapsed = collapsedGroups.has(b.key);
+          return (
+            <div key={b.key} className="session-list-group">
+              <button
+                type="button"
+                className="session-list-group-header collapsible"
+                onClick={() => toggleGroupCollapsed(b.key)}
+                aria-expanded={!isCollapsed}
+                title={isCollapsed ? '펼치기' : '접기'}
+              >
+                <span className="session-list-group-caret" aria-hidden="true">
+                  {isCollapsed ? '▸' : '▾'}
+                </span>
+                <span className="session-list-group-label">{b.label}</span>
+                <span className="session-list-group-count">{b.items.length}</span>
+              </button>
+              {!isCollapsed && b.items.map((s) => renderRow(s))}
+            </div>
+          );
+        })}
       </div>
       <SessionListFilterMenu
         open={filterMenuOpen}
