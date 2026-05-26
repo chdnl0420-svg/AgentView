@@ -85,6 +85,7 @@ async function findConversationFile(cwd: string, sessionId: string): Promise<str
 interface QuickConvSummary {
   size: number;
   messageCount: number;
+  firstUserText: string;
   lastUserText: string;
   lastAssistantText: string;
   lastActivity: number;
@@ -94,6 +95,7 @@ async function summarizeConversation(filePath: string): Promise<QuickConvSummary
   const summary: QuickConvSummary = {
     size: 0,
     messageCount: 0,
+    firstUserText: '',
     lastUserText: '',
     lastAssistantText: '',
     lastActivity: 0
@@ -127,6 +129,43 @@ async function summarizeConversation(filePath: string): Promise<QuickConvSummary
           /* skip */
         }
       }
+      // Head read for the first user message — used as the default session
+      // name when neither the catalog nor a manual rename provides one.
+      // If the whole file already fit into the tail read, reuse it.
+      if (start === 0) {
+        for (const line of lines) {
+          try {
+            const obj = JSON.parse(line);
+            const msg = obj?.message;
+            if (msg?.role === 'user') {
+              const t = extractFirstText(msg);
+              if (t) { summary.firstUserText = t; break; }
+            }
+          } catch {
+            /* skip */
+          }
+        }
+      } else {
+        const HEAD = 32 * 1024;
+        const headLen = Math.min(HEAD, s.size);
+        const headBuf = Buffer.alloc(headLen);
+        await fh.read(headBuf, 0, headLen, 0);
+        const headLines = headBuf.toString('utf8').split(/\r?\n/).filter(Boolean);
+        // Drop the last (possibly truncated) line; safe even if HEAD < s.size.
+        const headUsable = headLines.slice(0, -1);
+        for (const line of headUsable) {
+          try {
+            const obj = JSON.parse(line);
+            const msg = obj?.message;
+            if (msg?.role === 'user') {
+              const t = extractFirstText(msg);
+              if (t) { summary.firstUserText = t; break; }
+            }
+          } catch {
+            /* skip */
+          }
+        }
+      }
     } finally {
       await fh.close();
     }
@@ -134,6 +173,18 @@ async function summarizeConversation(filePath: string): Promise<QuickConvSummary
     /* ignore */
   }
   return summary;
+}
+
+/** Strip leading slash-commands, collapse whitespace, and clip to one
+ *  short line so the first user prompt makes a passable session title. */
+function deriveDefaultName(rawFirstUserText: string): string {
+  let s = rawFirstUserText.replace(/\r?\n/g, ' ').trim();
+  // Drop a leading slash-command token (e.g. "/loop 5m foo" → "5m foo").
+  s = s.replace(/^\/+\S*\s*/, '').trim();
+  // Strip any remaining leading slashes the user typed deliberately.
+  s = s.replace(/^\/+/, '').trim();
+  if (!s) return '';
+  return truncate(s, 60);
 }
 
 function extractFirstText(message: { content?: unknown }): string {
@@ -205,6 +256,8 @@ async function avdRecordToSession(
   if (!conversationPath) {
     conversationPath = await findConversationFile(cwd, sessionId);
   }
+  const catalogName =
+    typeof record.name === 'string' && record.name ? record.name : '';
   const session: BgSession = {
     pid,
     sessionId,
@@ -214,7 +267,10 @@ async function avdRecordToSession(
     version: undefined,
     kind: 'bg',
     entrypoint: 'avd',
-    name: typeof record.name === 'string' && record.name ? record.name : sessionId.slice(0, 8),
+    // Filled below from the conversation's first user message when neither
+    // the catalog nor a manual rename provides a name. Falls through to the
+    // sid prefix only when the jsonl is empty / missing.
+    name: catalogName || sessionId.slice(0, 8),
     agent: typeof record.backend === 'string' && record.backend ? record.backend : 'claude',
     jobId: sessionId.slice(0, 8),
     status: classifyStatus(record.status, alive),
@@ -231,6 +287,10 @@ async function avdRecordToSession(
     session.lastAssistantText = summary.lastAssistantText;
     if (summary.lastActivity > session.updatedAt) updatedAt = summary.lastActivity;
     session.updatedAt = updatedAt;
+    if (!catalogName) {
+      const derived = deriveDefaultName(summary.firstUserText);
+      if (derived) session.name = derived;
+    }
   }
   return session;
 }
