@@ -295,6 +295,25 @@ export function SessionList({
     setContextMenu(null);
   }, []);
 
+  // 그룹 자체 삭제 — groups 목록에서 빼고, 해당 그룹에 속해 있던 모든
+  // 세션의 membership 도 함께 제거. 서브메뉴는 열어둔 채로 (다른 그룹
+  // 클릭/삭제 이어갈 수 있도록) 유지.
+  const deleteGroup = useCallback((groupId: string) => {
+    setGroups((prev) => {
+      const next = prev.filter((g) => g.id !== groupId);
+      saveGroups(next);
+      return next;
+    });
+    setGroupMembership((prev) => {
+      const next: Record<string, string> = {};
+      for (const [sid, gid] of Object.entries(prev)) {
+        if (gid !== groupId) next[sid] = gid;
+      }
+      saveGroupMembership(next);
+      return next;
+    });
+  }, []);
+
   // 새 그룹 인라인 입력 상태. window.prompt() 는 Electron 에서 throw
   // ("prompt() is and will not be supported.") → 무반응 버그였음.
   const [creatingGroupName, setCreatingGroupName] = useState('');
@@ -790,16 +809,32 @@ export function SessionList({
                   {groups.map((g, idx) => {
                     const checked = currentGroupId === g.id;
                     return (
-                      <button
+                      <div
                         key={g.id}
-                        type="button"
-                        className={`session-list-menu-item ${checked ? 'checked' : ''}`}
-                        onClick={() => assignGroup(s.sessionId, checked ? null : g.id)}
+                        className={`session-list-menu-item session-list-menu-item-row ${checked ? 'checked' : ''}`}
                         title={g.name}
                       >
-                        <span className="session-list-menu-label">{g.name}</span>
-                        <span className="session-list-menu-kbd">{idx + 1}</span>
-                      </button>
+                        <button
+                          type="button"
+                          className="session-list-menu-item-main"
+                          onClick={() => assignGroup(s.sessionId, checked ? null : g.id)}
+                        >
+                          <span className="session-list-menu-label">{g.name}</span>
+                          <span className="session-list-menu-kbd">{idx + 1}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="session-list-menu-item-delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteGroup(g.id);
+                          }}
+                          title={`그룹 '${g.name}' 삭제`}
+                          aria-label={`그룹 '${g.name}' 삭제`}
+                        >
+                          ×
+                        </button>
+                      </div>
                     );
                   })}
                   {creatingGroup ? (
