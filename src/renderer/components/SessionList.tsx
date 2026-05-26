@@ -295,21 +295,29 @@ export function SessionList({
     setContextMenu(null);
   }, []);
 
-  const createGroupAndAssign = useCallback((sessionId: string) => {
-    const name = window.prompt('새 그룹 이름');
-    const trimmed = (name ?? '').trim();
-    if (!trimmed) return;
-    const newGroup: UserGroup = {
-      id: `g-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-      name: trimmed
-    };
-    setGroups((prev) => {
-      const next = [...prev, newGroup];
-      saveGroups(next);
-      return next;
-    });
-    assignGroup(sessionId, newGroup.id);
-  }, [assignGroup]);
+  // 새 그룹 인라인 입력 상태. window.prompt() 는 Electron 에서 throw
+  // ("prompt() is and will not be supported.") → 무반응 버그였음.
+  const [creatingGroupName, setCreatingGroupName] = useState('');
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const commitCreateGroup = useCallback(
+    (sessionId: string) => {
+      const trimmed = creatingGroupName.trim();
+      setCreatingGroup(false);
+      setCreatingGroupName('');
+      if (!trimmed) return;
+      const newGroup: UserGroup = {
+        id: `g-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        name: trimmed
+      };
+      setGroups((prev) => {
+        const next = [...prev, newGroup];
+        saveGroups(next);
+        return next;
+      });
+      assignGroup(sessionId, newGroup.id);
+    },
+    [assignGroup, creatingGroupName]
+  );
 
   // Ctrl/Cmd+K anywhere → focus session search.
   useEffect(() => {
@@ -739,15 +747,6 @@ export function SessionList({
             <button
               type="button"
               className="session-list-menu-item"
-              onClick={() => onOpenFolder(s)}
-              disabled={!s.cwd}
-            >
-              <span className="session-list-menu-label">다음에서 열기</span>
-              <span className="session-list-menu-caret">›</span>
-            </button>
-            <button
-              type="button"
-              className="session-list-menu-item"
               onClick={() => togglePin(s.sessionId)}
             >
               <span className="session-list-menu-label">{isPinned ? '고정 해제' : '고정'}</span>
@@ -803,24 +802,56 @@ export function SessionList({
                       </button>
                     );
                   })}
-                  <button
-                    type="button"
-                    className="session-list-menu-item"
-                    onClick={() => createGroupAndAssign(s.sessionId)}
-                  >
-                    <span className="session-list-menu-label">새 그룹…</span>
-                    <span className="session-list-menu-kbd">{groups.length + 1}</span>
-                  </button>
+                  {creatingGroup ? (
+                    <div className="session-list-menu-item">
+                      <input
+                        autoFocus
+                        type="text"
+                        className="session-list-rename-input"
+                        placeholder="새 그룹 이름"
+                        value={creatingGroupName}
+                        onChange={(e) => setCreatingGroupName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            commitCreateGroup(s.sessionId);
+                            setGroupSubmenuOpen(false);
+                            setContextMenu(null);
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setCreatingGroup(false);
+                            setCreatingGroupName('');
+                          }
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        onBlur={() => {
+                          // 빈 입력이면 그냥 취소. 내용 있으면 생성.
+                          if (creatingGroupName.trim()) {
+                            commitCreateGroup(s.sessionId);
+                          } else {
+                            setCreatingGroup(false);
+                            setCreatingGroupName('');
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="session-list-menu-item"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCreatingGroup(true);
+                        setCreatingGroupName('');
+                      }}
+                    >
+                      <span className="session-list-menu-label">새 그룹…</span>
+                      <span className="session-list-menu-kbd">{groups.length + 1}</span>
+                    </button>
+                  )}
                 </div>
               )}
-            </button>
-            <button
-              type="button"
-              className="session-list-menu-item"
-              onClick={() => toggleArchive(s.sessionId)}
-            >
-              <span className="session-list-menu-label">{isArchivedRow ? '보관 해제' : '보관'}</span>
-              <span className="session-list-menu-kbd">A</span>
             </button>
             <button
               type="button"
