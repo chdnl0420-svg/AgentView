@@ -349,6 +349,13 @@ export async function readSessionFromMetaPath(filePath: string): Promise<BgSessi
     const alive = isPidAlive(pid);
     const conversationPath = sessionId ? await findConversationFile(cwd, sessionId) : null;
     const convSummary = conversationPath ? await summarizeConversation(conversationPath) : null;
+    // Mirror avdRecordToSession naming: catalog name wins, then first user
+    // prompt (derived), then sid prefix as the last resort. Without this
+    // fallback the legacy meta path leaves `name` as undefined and the UI
+    // displays '이름 없음' (List) vs 'sid prefix' (Detail) for the same
+    // session, depending on which side computed the fallback.
+    const catalogName = typeof data.name === 'string' && data.name ? data.name : '';
+    const derived = !catalogName ? deriveDefaultName(convSummary?.firstUserText ?? '') : '';
     return {
       pid,
       sessionId,
@@ -358,7 +365,7 @@ export async function readSessionFromMetaPath(filePath: string): Promise<BgSessi
       version: data.version,
       kind: data.kind,
       entrypoint: data.entrypoint,
-      name: data.name,
+      name: catalogName || derived || sessionId.slice(0, 8),
       agent: data.agent,
       jobId: data.jobId,
       status: classifyStatus(data.status, alive),

@@ -335,6 +335,12 @@ export function SessionList({
   } | null>(null);
 
   // Close context menu on any outside click or Escape.
+  // NOTE: We defer attaching the global close listeners by one tick. React 18
+  // in dev mode commits state + runs effects synchronously during the event
+  // that opened the menu; if we attach immediately, the SAME contextmenu
+  // event continues bubbling up to window and fires close → the menu blinks
+  // open and shut within ~1ms. setTimeout(0) lets the originating event
+  // finish before we start listening.
   useEffect(() => {
     if (!contextMenu) return;
     const close = () => {
@@ -364,10 +370,13 @@ export function SessionList({
         actions.onDelete(s);
       }
     };
-    window.addEventListener('mousedown', close);
-    window.addEventListener('contextmenu', close);
-    window.addEventListener('keydown', onKey);
+    const t = window.setTimeout(() => {
+      window.addEventListener('mousedown', close);
+      window.addEventListener('contextmenu', close);
+      window.addEventListener('keydown', onKey);
+    }, 0);
     return () => {
+      window.clearTimeout(t);
       window.removeEventListener('mousedown', close);
       window.removeEventListener('contextmenu', close);
       window.removeEventListener('keydown', onKey);
