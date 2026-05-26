@@ -90,18 +90,28 @@ export function SessionListFilterMenu({
   const [submenu, setSubmenu] = useState<SubmenuId>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
+  // Reset submenu only when the popup toggles between closed/open. Don't put
+  // `submenu` in this effect's deps — that caused the listener teardown +
+  // re-attach to fire on every submenu change, and the inline `setSubmenu(null)`
+  // immediately collapsed any submenu the user had just opened.
   useEffect(() => {
     if (!open) return;
     setSubmenu(null);
+  }, [open]);
+
+  // Outside-click / Escape handlers. Use a functional state update for Escape
+  // so we can read the latest `submenu` value without re-registering the
+  // listener on every change.
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        if (submenu) {
-          setSubmenu(null);
-        } else {
-          onClose();
-        }
-      }
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setSubmenu((cur) => {
+        if (cur) return null;
+        onClose();
+        return cur;
+      });
     };
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current) return;
@@ -113,7 +123,7 @@ export function SessionListFilterMenu({
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('mousedown', onDown);
     };
-  }, [open, onClose, submenu]);
+  }, [open, onClose]);
 
   if (!open) return null;
 
