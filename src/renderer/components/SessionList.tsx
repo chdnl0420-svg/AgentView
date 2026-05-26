@@ -667,7 +667,10 @@ export function SessionList({
           popup triggered from the head slider icon (Claude Code Desktop
           2026.04 sidebar pattern). */}
       <div className="session-list-body">
-        {flatOrder.length === 0 && (
+        {/* "비어있음" 메시지는 *실제 데이터* 가 0개일 때만 — flatOrder 는
+            collapsed 그룹을 제외하므로 접기만 해도 비어 보임. 그룹 접힘
+            상태와 무관하게 pinned + 모든 bucket items 합산으로 판정. */}
+        {pinnedList.length === 0 && buckets.every((b) => b.items.length === 0) && (
           <div className="session-list-empty">{emptyText}</div>
         )}
         {pinnedList.length > 0 && (
