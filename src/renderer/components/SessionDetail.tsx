@@ -697,6 +697,14 @@ export function SessionDetail({
   // We don't write back to the meta file because (a) some sessions don't have
   // one and (b) it's owned by claude itself.
   const [renames, setRenames] = useState<Record<string, string>>(() => loadRenames());
+  // SessionList 가 우클릭 '이름 변경' 으로 저장하면 'agentview:renames-changed'
+  // 이벤트를 보낸다. detail 도 같은 localStorage 키를 보지만 이전엔 mount 시
+  // 한 번만 로드하고 끝이라 stale → 헤더가 안 바뀜. 이벤트 받아 재로드한다.
+  useEffect(() => {
+    const onChanged = () => setRenames(loadRenames());
+    window.addEventListener('agentview:renames-changed', onChanged);
+    return () => window.removeEventListener('agentview:renames-changed', onChanged);
+  }, []);
   const overrideName = renames[session.sessionId];
   const displayName =
     overrideName || session.name || session.agent || session.sessionId.slice(0, 8);
