@@ -22,7 +22,7 @@ import { markHidden } from '../hiddenSessions';
 import { checkClaudeStatus, ensureDaemonRunning } from '../claudePreflight';
 import { appendSessionEvent } from '../workspaceStore';
 import { readConversation } from '../conversationLoader';
-import type { SessionRunner } from '../sessionRunner';
+import type { AvdSessionManager } from '../avd';
 import type { LiveWatcher } from '../liveWatcher';
 import { broadcast } from './broadcast';
 import { loadAgents } from './loaders';
@@ -60,12 +60,12 @@ async function runCancelLoop(sessionId: string): Promise<void> {
 }
 
 interface SessionDeps {
-  runner: SessionRunner;
+  manager: AvdSessionManager;
   liveWatcher: LiveWatcher;
   runningList: () => RunningSessionInfo[];
 }
 
-export function registerSessions({ runner, liveWatcher, runningList }: SessionDeps): void {
+export function registerSessions({ manager, liveWatcher, runningList }: SessionDeps): void {
   ipcMain.handle(IPC.SessionsList, async () => {
     const [agentsList, owned] = await Promise.all([loadAgents(), ensureOwnedLoaded()]);
     const agentNames = new Set(agentsList.map((a) => a.name));
@@ -74,7 +74,7 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
     // is needed here. owned + knownAgentNames are still passed for back-
     // compat with the ScanFilter interface, but the scanner no longer
     // consults them.
-    return scanSessions(runner.pidsBySession(), runner.activePids(), {
+    return scanSessions(manager.pidsBySession(), manager.activePids(), {
       ownedSessionIds: owned,
       knownAgentNames: agentNames
     });
@@ -99,51 +99,36 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
     liveWatcher.unwatchConversation(sessionId);
   });
 
-  ipcMain.handle(IPC.SessionsNew, async (_e, input: NewSessionInput) => runner.startNewSession(input));
+  ipcMain.handle(IPC.SessionsNew, async (_e, input: NewSessionInput) => manager.spawn(input));
   ipcMain.handle(IPC.SessionsResume, async (_e, input: ResumeMessageInput) => {
-    // Avd-tracked sessions take priority — they have their own delivery
-    // channel (CTRL send-message via avd daemon) that doesn't touch the
-    // legacy claude PTY. We open the AvdClient inside sendAvdMessage and
-    // close it again; the daemon owns the underlying worker handle.
-    //
-    // TODO(chunk-11 polish): sendAvdMessage relies on the daemon already
-    // being up. If it died after the initial ensureAvdReady() during start,
-    // we'll surface ECONNREFUSED as `AVD_SEND_FAILED:` to the user instead
-    // of transparently restarting. A follow-up PR can add an ensureAvdReady
-    // call inside sendAvdMessage; intentionally out of scope for chunk-12
-    // to keep the surface area small.
-    if (runner.knowsAvdSession(input.sessionId)) {
+    // Single seam: manager.status(sid) tells us PTY vs AVD vs gone. The
+    // PTY/AVD branches route through manager.resume() — it picks the
+    // delivery channel from the sessionTable kind. Gone falls back to
+    // legacy daemon-attach (claude background-agent socket) so external
+    // alive sessions get attached instead of respawned.
+    const status = manager.status(input.sessionId);
+
+    if (status.kind === 'running-by-us' && status.runner === 'avd') {
       try {
-        await runner.sendAvdMessage(
-          input.sessionId,
-          input.prompt,
-          input.permissionMode ?? null,
-        );
-        appendSessionEvent(
-          input.sessionId,
-          'resume',
-          `avd prompt=${input.prompt.slice(0, 60)}`,
-        ).catch(() => undefined);
-        const info = runner.getAvdSession(input.sessionId);
-        return { sessionId: input.sessionId, pid: info?.pid ?? null };
+        // manager.resume() already records the "avd prompt=..." event
+        // internally. Do not duplicate it here.
+        return await manager.resume(input);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        // If avd daemon no longer knows this session (e.g., daemon restart
-        // wiped its in-memory handle map), release tracking so a retry
-        // falls through to legacy paths instead of looping on
-        // UNKNOWN_SESSION forever. Match both the avd server's
-        // `UNKNOWN_SESSION` and sessionRunner's `UNKNOWN_AVD_SESSION`
-        // defensively in case ordering changes later.
+        // avd daemon lost the handle (e.g. daemon restart). Drop tracking
+        // so a retry falls through to legacy paths instead of looping on
+        // UNKNOWN_SESSION forever.
         if (/UNKNOWN_SESSION|UNKNOWN_AVD_SESSION/.test(message)) {
-          runner.forgetAvdSession(input.sessionId);
+          manager.untrack(input.sessionId);
         }
         throw new Error(`AVD_SEND_FAILED: ${message}`);
       }
     }
-    // Our PTY → type into the same stdin.
-    if (runner.hasSession(input.sessionId)) {
-      return runner.resumeSession(input);
+
+    if (status.kind === 'running-by-us' && status.runner === 'pty') {
+      return manager.resume(input);
     }
+
     // External alive → attach to the claude daemon's worker pipe directly.
     // claude TUI uses the same channel, so the agent picks up our text as
     // a normal user message in the same sid.
@@ -157,8 +142,8 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
       // The daemon may have died between scan and dispatch. Try one bootstrap
       // + retry before reporting the failure to the user — that's exactly the
       // "Claude Code wasn't running, just start it" UX requested for 1.0.4.
-      const status = await checkClaudeStatus(true);
-      if (status.cliPath && !status.daemonAlive) {
+      const cliStatus = await checkClaudeStatus(true);
+      if (cliStatus.cliPath && !cliStatus.daemonAlive) {
         await ensureDaemonRunning();
         const retry = await sendToBackgroundAgent(input.sessionId, input.prompt);
         if (retry.ok) {
@@ -175,64 +160,56 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
           `이 경우 분기로 진행하세요.`
       );
     }
-    // External dead → resume is safe (no pid conflict).
-    return runner.resumeSession(input);
+    // External dead → respawn via manager (PtyRunner with --resume).
+    return manager.resume(input);
   });
   ipcMain.handle(IPC.SessionsFork, async (_e, input: ResumeMessageInput) => {
-    // Avd sessions cannot be forked via `claude --fork-session` — that path
+    // AVD-tracked sessions cannot be forked — `claude --fork-session`
     // assumes a claude conversation file. Surface a clear, prefixed error
     // so the renderer can show an actionable toast instead of failing
     // opaquely when the user tries to branch an avd session.
-    if (runner.knowsAvdSession(input.sessionId)) {
+    const status = manager.status(input.sessionId);
+    if (status.kind === 'running-by-us' && status.runner === 'avd') {
       throw new Error(
-        'FORK_NOT_SUPPORTED: avd 백엔드 세션은 분기를 지원하지 않습니다. 새 세션을 시작해주세요.',
+        'FORK_NOT_SUPPORTED: avd 백엔드 세션은 분기를 지원하지 않습니다. 새 세션을 시작해주세요.'
       );
     }
-    return runner.forkSession(input);
+    return manager.fork(input);
   });
   ipcMain.handle(IPC.SessionsCancel, async (_e, sessionId: string) => {
-    // Avd-tracked sessions: route cancel to the avd daemon via the
-    // cancel-session CTRL frame (chunk-10 wires this up server-side). For
-    // now the runner throws `CANCEL_NOT_IMPLEMENTED` — catch it and fall
-    // through to the legacy path so the user still gets a working cancel
-    // (the underlying claude worker may still be reachable via the daemon
-    // dispatch path). Other errors wrap with `AVD_CANCEL_FAILED:`.
-    if (runner.knowsAvdSession(sessionId)) {
-      try {
-        const ok = await runner.cancelAvdSession(sessionId);
-        if (ok) {
-          runner.forgetAvdSession(sessionId);
-        }
-        return ok;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message.startsWith('CANCEL_NOT_IMPLEMENTED')) {
-          // chunk-10 hasn't shipped yet — release tracking so subsequent
-          // operations on this sid fall through to legacy paths (UX:
-          // cancel button no-ops via legacy, but we don't grow the
-          // avdSessions Map forever or get stuck in an avd-only loop).
-          // Re-evaluate when chunk-10 lands.
-          runner.forgetAvdSession(sessionId);
-          console.warn('[ipc] avd cancel not yet implemented, falling back', sessionId);
-        } else {
-          throw new Error(`AVD_CANCEL_FAILED: ${message}`);
-        }
+    // Single seam: manager.cancel() returns a discriminated union so we
+    // branch cleanly without try/catch on a stringly-typed throw.
+    const result = await manager.cancel(sessionId);
+    switch (result.kind) {
+      case 'cancelled':
+        return true;
+      case 'unknown-session': {
+        // Not tracked here — last chance: maybe an external worker is alive.
+        const externalAlive = await isExternalSessionAlive(sessionId);
+        if (!externalAlive) return false;
+        runCancelLoop(sessionId).catch((err) => {
+          console.error('[cancel] background loop failed', err);
+        });
+        return true; // request accepted; user doesn't need to retry
       }
+      case 'not-supported': {
+        // AVD cancel CTRL not shipped yet (chunk-10). Release tracking
+        // so future ops fall through to legacy paths, then try the
+        // external cancel loop.
+        manager.untrack(sessionId);
+        console.warn('[ipc] avd cancel not supported, falling back', sessionId, result.reason);
+        const externalAlive = await isExternalSessionAlive(sessionId);
+        if (externalAlive) {
+          runCancelLoop(sessionId).catch((err) => {
+            console.error('[cancel] background loop failed', err);
+          });
+          return true;
+        }
+        return false;
+      }
+      case 'error':
+        throw new Error(`AVD_CANCEL_FAILED: ${result.message}`);
     }
-    // Our PTY → kill it.
-    if (runner.hasSession(sessionId)) {
-      return runner.cancel(sessionId);
-    }
-    // External alive → retry loop: claude may not accept ESC in some modal
-    // states (waiting for tool result, etc.). We poll until the worker is
-    // idle / dead, up to MAX_TRIES, so the user only has to press once.
-    const externalAlive = await isExternalSessionAlive(sessionId);
-    if (!externalAlive) return false;
-
-    runCancelLoop(sessionId).catch((err) => {
-      console.error('[cancel] background loop failed', err);
-    });
-    return true; // we accepted the request; user doesn't need to retry
   });
   ipcMain.handle(IPC.SessionsRunningList, async () => runningList());
 
@@ -319,8 +296,8 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
     //   A) Remove daemon spawn-cues: dispatch/<short>.json + pty-pids/<short>.pid
     //   B) Drop the worker from roster.json so the supervisor can't see it
     //   C) Kill the live worker PID, then wipe jobs/<short>/
-    //   L1) Forget the avd-tracked / direct-PTY slot in our SessionRunner so
-    //       follow-up actions can't reattach to a deleted session.
+    //   L1) Cancel + untrack the local AvdSessionManager entry so follow-up
+    //       actions can't reattach to a deleted session.
     const claudeDir = join(homedir(), '.claude');
     const daemonDir = join(claudeDir, 'daemon');
     const jobsDir = join(claudeDir, 'jobs');
@@ -374,12 +351,10 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
         await fs.rm(join(jobsDir, short), { recursive: true, force: true });
 
         // L1) Drop in-memory references so the renderer can't bring back a
-        // zombie via resume/cancel paths. cancel() also kills the local PTY
-        // for legacy (non-avd) sessions; forgetAvdSession drops the avd
-        // metadata. Both are best-effort and idempotent — if neither has the
-        // sid, nothing happens.
-        try { runner.cancel(sid); } catch { /* not a local slot */ }
-        try { runner.forgetAvdSession(sid); } catch { /* not avd-tracked */ }
+        // zombie via resume/cancel paths. cancel() kills the local PTY
+        // for our slots; untrack drops the metadata. Both idempotent.
+        try { await manager.cancel(sid); } catch { /* not a local slot */ }
+        try { manager.untrack(sid); } catch { /* not tracked */ }
 
         deleted.push(sid);
       } catch (err) {
@@ -397,10 +372,19 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
       } catch { /* daemon may have rewritten — hidden list still protects UI */ }
     }
 
+    // 렌더러 세션 리스트 강제 새로고침. liveWatcher 의 'sessions-changed'
+    // 이벤트는 디렉터리 변화를 감지하지만 jobs/<short>/ 디렉터리 삭제만으로는
+    // 트리거가 늦거나 안 됨 → 카드가 그대로 남아 사용자는 "삭제 안 됨" 으로
+    // 보임. 명시적으로 SessionsChanged 를 broadcast 해 useSessionScan 이
+    // reloadSessions() 를 실행하게 한다.
+    if (deleted.length > 0) {
+      broadcast(EVT.SessionsChanged);
+    }
+
     return { ok: failed.length === 0, deleted, failed };
   });
 
-  // Patch the live session's permission mode. The current sessionRunner
+  // Patch the live session's permission mode. The current AvdSessionManager
   // doesn't expose a hot-swap so we mirror the renderer's intent into the
   // session doc; subsequent send paths read this when respawning. Best
   // effort — failures don't block the UI.
