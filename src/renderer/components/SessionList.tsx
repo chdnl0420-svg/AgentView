@@ -6,11 +6,6 @@ import { loadJSON, saveJSON } from '../lib/persistence';
 
 const RENAMES_KEY = 'sessionRenames';
 const PINS_KEY = 'sessionPins';
-const FILTER_KEY = 'sessionList.filter';
-const PROJECT_FILTER_KEY = 'sessionList.projectFilter';
-const ENV_FILTER_KEY = 'sessionList.envFilter';
-const GROUP_BY_KEY = 'sessionList.groupBy';
-const ALL_VALUE = '__all__';
 
 function loadPins(): Set<string> {
   return new Set(loadJSON<string[]>(PINS_KEY, []));
@@ -56,26 +51,8 @@ interface SessionListProps {
   now: number;
 }
 
-// Claude Code Desktop (2026.04 redesign) 사이드바 필터 모델을 따른다.
-//   status 차원: 단일 선택 드롭다운 (All / Running / Waiting / Completed)
-//   project 차원: 단일 선택 드롭다운 (All / <cwd basename> ...)
-//   environment 차원: 단일 선택 드롭다운 (All / <agent value> ...)
-//   group by: 시간 그룹 (오늘/어제/이번 주/이전) vs 프로젝트 그룹
-//
-// 출처: claude.com/blog/claude-code-desktop-redesign, miraflow.ai,
-//       devtoolpicks.com — 사이드바 상단 컨트롤이 status/project/environment
-//       필터 + group by project 토글로 구성된다고 명시.
-
-type Filter = 'all' | 'running' | 'waiting' | 'completed';
+type Filter = 'all' | 'active' | 'completed';
 type GroupKey = 'today' | 'yesterday' | 'thisWeek' | 'older';
-type GroupBy = 'time' | 'project';
-
-const STATUS_LABELS: Record<Filter, string> = {
-  all: '모든 상태',
-  running: '실행 중',
-  waiting: '대기',
-  completed: '완료'
-};
 
 const GROUP_LABELS: Record<GroupKey, string> = {
   today: '오늘',
@@ -101,37 +78,12 @@ function statusLabel(s: BgSession): string {
   return '대기';
 }
 
-function isRunning(s: BgSession): boolean {
-  return s.alive && s.status === 'running';
-}
-
-function isWaiting(s: BgSession): boolean {
-  return s.alive && s.status !== 'running';
+function isActive(s: BgSession): boolean {
+  return s.alive;
 }
 
 function isCompleted(s: BgSession): boolean {
   return !s.alive && s.status === 'completed';
-}
-
-function matchesStatus(s: BgSession, f: Filter): boolean {
-  if (f === 'all') return true;
-  if (f === 'running') return isRunning(s);
-  if (f === 'waiting') return isWaiting(s);
-  if (f === 'completed') return isCompleted(s);
-  return true;
-}
-
-/** cwd 의 마지막 디렉토리 이름 — Claude Code Desktop "Project" 필터 대응. */
-function projectKey(s: BgSession): string {
-  const cwd = s.cwd ?? '';
-  if (!cwd) return '(미지정)';
-  const norm = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
-  return norm.split('/').pop() || '(미지정)';
-}
-
-/** AgentView 의 환경 차원은 agent (claude / codex / external-claude / ...) 값. */
-function envKey(s: BgSession): string {
-  return s.agent || s.backend || '(기본)';
 }
 
 function matchesQuery(s: BgSession, name: string, preview: string, q: string): boolean {
@@ -174,24 +126,8 @@ export function SessionList({
   now
 }: SessionListProps) {
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<Filter>(() => loadJSON<Filter>(FILTER_KEY, 'all'));
-  const [projectFilter, setProjectFilter] = useState<string>(() =>
-    loadJSON<string>(PROJECT_FILTER_KEY, ALL_VALUE)
-  );
-  const [envFilter, setEnvFilter] = useState<string>(() =>
-    loadJSON<string>(ENV_FILTER_KEY, ALL_VALUE)
-  );
-  const [groupBy, setGroupBy] = useState<GroupBy>(() =>
-    loadJSON<GroupBy>(GROUP_BY_KEY, 'time')
-  );
+  const [filter, setFilter] = useState<Filter>('all');
   const [renamingId, setRenamingId] = useState<string | null>(null);
-
-  // Persist filter selections — Claude Code Desktop 도 사이드바 필터 상태를
-  // 세션 간 유지하므로 동일하게 동작한다.
-  useEffect(() => { saveJSON(FILTER_KEY, filter); }, [filter]);
-  useEffect(() => { saveJSON(PROJECT_FILTER_KEY, projectFilter); }, [projectFilter]);
-  useEffect(() => { saveJSON(ENV_FILTER_KEY, envFilter); }, [envFilter]);
-  useEffect(() => { saveJSON(GROUP_BY_KEY, groupBy); }, [groupBy]);
   const [renameDraft, setRenameDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; session: BgSession } | null>(null);
   const [pins, setPins] = useState<Set<string>>(() => loadPins());
@@ -248,30 +184,10 @@ export function SessionList({
     };
   }, [contextMenu]);
 
-  // Build the option lists for project / environment dropdowns by walking the
-  // session collection once. Counts are stable across re-renders thanks to
-  // useMemo. status counts double as the label suffix in the dropdown options.
-  const projectOptions = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const s of sessions) {
-      const k = projectKey(s);
-      map.set(k, (map.get(k) ?? 0) + 1);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [sessions]);
-  const envOptions = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const s of sessions) {
-      const k = envKey(s);
-      map.set(k, (map.get(k) ?? 0) + 1);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [sessions]);
-  const statusCounts = useMemo(
+  const counts = useMemo(
     () => ({
       all: sessions.length,
-      running: sessions.filter(isRunning).length,
-      waiting: sessions.filter(isWaiting).length,
+      active: sessions.filter(isActive).length,
       completed: sessions.filter(isCompleted).length,
     }),
     [sessions]
@@ -282,13 +198,12 @@ export function SessionList({
       const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
       const preview = s.lastUserText ?? '';
       if (!matchesQuery(s, name, preview, query)) return false;
-      if (!matchesStatus(s, filter)) return false;
-      if (projectFilter !== ALL_VALUE && projectKey(s) !== projectFilter) return false;
-      if (envFilter !== ALL_VALUE && envKey(s) !== envFilter) return false;
+      if (filter === 'active') return isActive(s);
+      if (filter === 'completed') return isCompleted(s);
       return true;
     });
     return list.sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [sessions, query, filter, projectFilter, envFilter, renames]);
+  }, [sessions, query, filter, renames]);
 
   // Bucket sessions: pinned ones float to a separate "고정" group at the
   // top, regardless of how recent they are; the rest fall back into
@@ -297,8 +212,7 @@ export function SessionList({
     () => filtered.filter((s) => pins.has(s.sessionId)),
     [filtered, pins]
   );
-  // Time-grouped buckets — used when groupBy === 'time' (기본).
-  const groupedByTime = useMemo(() => {
+  const grouped = useMemo(() => {
     const map: Record<GroupKey, BgSession[]> = { today: [], yesterday: [], thisWeek: [], older: [] };
     for (const s of filtered) {
       if (pins.has(s.sessionId)) continue;
@@ -307,34 +221,12 @@ export function SessionList({
     return map;
   }, [filtered, now, pins]);
 
-  // Project-grouped buckets — Claude Code Desktop 의 "Group by project" 동작.
-  // 키는 projectKey(s) 결과이며, 그룹 정렬은 그룹 내 최신 세션의 updatedAt.
-  const groupedByProject = useMemo(() => {
-    const buckets = new Map<string, BgSession[]>();
-    for (const s of filtered) {
-      if (pins.has(s.sessionId)) continue;
-      const k = projectKey(s);
-      if (!buckets.has(k)) buckets.set(k, []);
-      buckets.get(k)!.push(s);
-    }
-    return Array.from(buckets.entries()).sort((a, b) => {
-      const aLatest = a[1][0]?.updatedAt ?? 0;
-      const bLatest = b[1][0]?.updatedAt ?? 0;
-      return bLatest - aLatest;
-    });
-  }, [filtered, pins]);
-
-  // Flat order for keyboard navigation: pinned first, then whichever bucket
-  // mode is active. Required so ↑/↓ 탐색이 시각 순서를 그대로 따라간다.
+  // Flat order for keyboard navigation: pinned first, then the time buckets.
   const flatOrder = useMemo(() => {
     const out: BgSession[] = [...pinnedList];
-    if (groupBy === 'project') {
-      for (const [, items] of groupedByProject) out.push(...items);
-    } else {
-      for (const k of GROUP_ORDER) out.push(...groupedByTime[k]);
-    }
+    for (const k of GROUP_ORDER) out.push(...grouped[k]);
     return out;
-  }, [groupedByTime, groupedByProject, pinnedList, groupBy]);
+  }, [grouped, pinnedList]);
 
   const commitRename = useCallback(
     (sessionId: string) => {
@@ -402,9 +294,9 @@ export function SessionList({
   );
 
   const emptyText =
-    query || filter !== 'all' || projectFilter !== ALL_VALUE || envFilter !== ALL_VALUE
+    query || filter !== 'all'
       ? '일치하는 세션 없음'
-      : '세션 없음 — 위 "+ 새 작업"으로 시작하세요';
+      : '세션 없음 — 위 “+ 새 작업”으로 시작하세요';
 
   const renderRow = (s: BgSession): React.ReactElement => {
     const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
@@ -508,55 +400,30 @@ export function SessionList({
           </button>
         )}
       </div>
-      {/* Claude Code Desktop (2026.04) 사이드바 필터 패턴:
-          상단에 status / project / environment 드롭다운 3 + group by 토글.
-          기존 "모두/실행 중/완료" chip row 는 제거됨. 출처:
-          claude.com/blog/claude-code-desktop-redesign + miraflow guide. */}
-      <div className="session-list-controls" role="group" aria-label="세션 필터">
-        <select
-          className="session-list-control"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value as Filter)}
-          aria-label="상태 필터"
-          title="상태 필터"
-        >
-          <option value="all">{STATUS_LABELS.all} ({statusCounts.all})</option>
-          <option value="running">{STATUS_LABELS.running} ({statusCounts.running})</option>
-          <option value="waiting">{STATUS_LABELS.waiting} ({statusCounts.waiting})</option>
-          <option value="completed">{STATUS_LABELS.completed} ({statusCounts.completed})</option>
-        </select>
-        <select
-          className="session-list-control"
-          value={projectFilter}
-          onChange={(e) => setProjectFilter(e.target.value)}
-          aria-label="프로젝트 필터"
-          title="프로젝트 필터"
-        >
-          <option value={ALL_VALUE}>모든 프로젝트 ({sessions.length})</option>
-          {projectOptions.map(([k, n]) => (
-            <option key={k} value={k}>{k} ({n})</option>
-          ))}
-        </select>
-        <select
-          className="session-list-control"
-          value={envFilter}
-          onChange={(e) => setEnvFilter(e.target.value)}
-          aria-label="환경 필터"
-          title="환경 필터 (에이전트 / 백엔드)"
-        >
-          <option value={ALL_VALUE}>모든 환경 ({sessions.length})</option>
-          {envOptions.map(([k, n]) => (
-            <option key={k} value={k}>{k} ({n})</option>
-          ))}
-        </select>
+      <div className="session-list-filters" role="tablist">
         <button
           type="button"
-          className={`session-list-control session-list-groupby ${groupBy === 'project' ? 'on' : ''}`}
-          onClick={() => setGroupBy((g) => (g === 'project' ? 'time' : 'project'))}
-          aria-pressed={groupBy === 'project'}
-          title={groupBy === 'project' ? '시간 그룹으로 보기' : '프로젝트 그룹으로 보기'}
+          className={`session-list-filter ${filter === 'all' ? 'active' : ''}`}
+          onClick={() => setFilter('all')}
+          aria-pressed={filter === 'all'}
         >
-          {groupBy === 'project' ? '⊟ 프로젝트' : '⊞ 시간'}
+          모두 <span className="session-list-filter-count">{counts.all}</span>
+        </button>
+        <button
+          type="button"
+          className={`session-list-filter ${filter === 'active' ? 'active' : ''}`}
+          onClick={() => setFilter('active')}
+          aria-pressed={filter === 'active'}
+        >
+          실행 중 <span className="session-list-filter-count">{counts.active}</span>
+        </button>
+        <button
+          type="button"
+          className={`session-list-filter ${filter === 'completed' ? 'active' : ''}`}
+          onClick={() => setFilter('completed')}
+          aria-pressed={filter === 'completed'}
+        >
+          완료 <span className="session-list-filter-count">{counts.completed}</span>
         </button>
       </div>
       <div className="session-list-body">
@@ -569,25 +436,16 @@ export function SessionList({
             {pinnedList.map((s) => renderRow(s))}
           </div>
         )}
-        {groupBy === 'project'
-          ? groupedByProject.map(([projectName, items]) => (
-              <div key={projectName} className="session-list-group">
-                <div className="session-list-group-header" title={projectName}>
-                  📁 {projectName} <span className="session-list-group-count">({items.length})</span>
-                </div>
-                {items.map((s) => renderRow(s))}
-              </div>
-            ))
-          : GROUP_ORDER.map((g) => {
-              const items = groupedByTime[g];
-              if (items.length === 0) return null;
-              return (
-                <div key={g} className="session-list-group">
-                  <div className="session-list-group-header">{GROUP_LABELS[g]}</div>
-                  {items.map((s) => renderRow(s))}
-                </div>
-              );
-            })}
+        {GROUP_ORDER.map((g) => {
+          const items = grouped[g];
+          if (items.length === 0) return null;
+          return (
+            <div key={g} className="session-list-group">
+              <div className="session-list-group-header">{GROUP_LABELS[g]}</div>
+              {items.map((s) => renderRow(s))}
+            </div>
+          );
+        })}
       </div>
       {contextMenu && (
         <div
