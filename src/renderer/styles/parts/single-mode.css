@@ -82,40 +82,55 @@
 }
 .session-list-search-clear:hover { color: var(--text-primary); background: var(--bg-elev-4, #2b2f3a); }
 
-.session-list-filters {
+/* Claude Code Desktop (2026.04) 사이드바 필터 컨트롤 — status/project/env
+   드롭다운 + group-by 토글. 기존 5-chip 필터 row 는 제거됨. */
+.session-list-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  padding: 4px 12px 8px;
+  padding: 4px 10px 8px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.session-list-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: transparent;
+.session-list-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  background: var(--bg-elev-2);
+  color: var(--text-primary);
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  border-radius: var(--radius-sm, 6px);
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.12s;
+  outline: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
 }
-.session-list-filter:hover {
-  background: var(--bg-elev-2);
-  color: var(--text-primary);
+.session-list-control:hover {
+  background: var(--bg-elev-3, #21263a);
+  border-color: var(--border-strong);
 }
-.session-list-filter.active {
+.session-list-control:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.session-list-groupby {
+  flex: 0 0 auto;
+  min-width: 72px;
+  text-align: center;
+}
+.session-list-groupby.on {
   background: var(--accent-soft);
   border-color: var(--accent);
-  color: var(--text-primary);
+  color: var(--accent);
 }
-.session-list-filter-count {
+.session-list-group-count {
   font-size: 10px;
   font-weight: 400;
   opacity: 0.75;
+  margin-left: 4px;
 }
 
 .session-list-body {
