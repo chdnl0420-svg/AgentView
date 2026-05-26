@@ -726,10 +726,21 @@ export function SessionDetail({
       .catch((err) => console.error('[rename] CLI sync failed', err));
   };
 
-  // Pick the most informative model label we can: the one from the latest
-  // assistant message (matches what claude actually used), falling back to
-  // a short tag from the meta if we haven't seen an assistant turn yet.
-  const rawModel = turnInfo.model || data?.meta.agentSetting || null;
+  // Local overrides for model/permission. 사용자가 버튼으로 선택하면
+  // 백엔드가 다음 메시지에 반영하지만 conversation file 의 meta 는 그
+  // 다음 어시스턴트 응답 전까지 stale → UI 상 라벨/체크가 안 바뀌어
+  // "내가 분명 클릭했는데 변경 안 됨" 으로 보임. override 를 즉시 적용해
+  // 라벨/체크가 바로 새 값으로 표시되게 한다. 세션이 바뀌면 reset.
+  const [modelOverride, setModelOverride] = useState<string | null>(null);
+  const [permOverride, setPermOverride] = useState<PermissionMode | null>(null);
+  useEffect(() => {
+    setModelOverride(null);
+    setPermOverride(null);
+  }, [session.sessionId]);
+
+  // Pick the most informative model label we can: 사용자가 방금 선택한 override
+  // 가 최우선, 그 다음 최신 assistant 메시지의 model, 마지막으로 meta.
+  const rawModel = modelOverride || turnInfo.model || data?.meta.agentSetting || null;
   // Display format: strip `claude-` prefix and rewrite the trailing dashed
   // version into "X.Y" (e.g. `claude-sonnet-4-6` → `sonnet 4.6`). Anything
   // we don't recognise falls back to the original string.
@@ -1247,7 +1258,14 @@ export function SessionDetail({
         }
         footerExtras={
           <>
-            {data?.meta?.permissionMode && (
+            {(() => {
+              // 현재 권한: override 우선, 그 다음 meta. 둘 다 없으면 버튼
+              // 자체를 안 그림 (이전 동작 보존).
+              const currentPerm = (permOverride ?? data?.meta?.permissionMode) as
+                | PermissionMode
+                | undefined;
+              if (!currentPerm) return null;
+              return (
               <div className="dropdown-anchor">
                 <button
                   type="button"
@@ -1260,7 +1278,7 @@ export function SessionDetail({
                     setPermDropdownOpen((v) => !v);
                   }}
                 >
-                  🛡 {permLabel(data.meta.permissionMode as string)}
+                  🛡 {permLabel(currentPerm)}
                   <span className="caret">▾</span>
                 </button>
                 {permDropdownOpen && (
@@ -1271,7 +1289,7 @@ export function SessionDetail({
                   >
                     <div className="badge-popup-title">권한 모드</div>
                     {(['bypassPermissions','acceptEdits','default','plan'] as const).map((m) => {
-                      const active = data?.meta?.permissionMode === m;
+                      const active = currentPerm === m;
                       return (
                         <button
                           key={m}
@@ -1280,10 +1298,15 @@ export function SessionDetail({
                           className={`badge-popup-item ${active ? 'active' : ''}`}
                           onClick={async () => {
                             setPermDropdownOpen(false);
+                            // Optimistic UI: override 즉시 적용 → 라벨/체크 바로 갱신.
+                            setPermOverride(m);
                             try {
                               await window.av.sessions.setPermission(session.sessionId, m);
                               setBadgeToast('권한이 다음 메시지부터 적용됩니다.');
-                            } catch {/* ignore */}
+                            } catch {
+                              // 실패 시 override 롤백 — meta 가 다시 권위 있는 값.
+                              setPermOverride(null);
+                            }
                           }}
                         >
                           <span className="badge-popup-check" aria-hidden="true">
@@ -1296,7 +1319,8 @@ export function SessionDetail({
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
             <button
               type="button"
               className={`filter-toggle ${onlyMine ? 'on' : ''}`}
@@ -1346,10 +1370,14 @@ export function SessionDetail({
                             className={`badge-popup-item ${active ? 'active' : ''}`}
                             onClick={async () => {
                               setModelDropdownOpen(false);
+                              // Optimistic UI: 라벨/체크 바로 새 모델로 표시.
+                              setModelOverride(opt.value);
                               try {
                                 await window.av.sessions.setModel(session.sessionId, opt.value);
                                 setBadgeToast('모델이 다음 메시지부터 적용됩니다.');
-                              } catch {/* ignore */}
+                              } catch {
+                                setModelOverride(null);
+                              }
                             }}
                           >
                             <span className="badge-popup-check" aria-hidden="true">
