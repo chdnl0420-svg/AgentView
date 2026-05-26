@@ -312,10 +312,15 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
     // every layer the daemon could read from, and then mark the sessionId
     // as hidden so the UI ignores it even if the daemon brings it back.
     //
+    //   D0) Mark hidden — UI safety net first (card disappears immediately)
+    //   L0) Close local watchers/tails BEFORE wiping files so we don't keep
+    //       reading a path that's about to vanish (avoids ENOENT churn and
+    //       stale handles in our process).
     //   A) Remove daemon spawn-cues: dispatch/<short>.json + pty-pids/<short>.pid
     //   B) Drop the worker from roster.json so the supervisor can't see it
     //   C) Kill the live worker PID, then wipe jobs/<short>/
-    //   D) Record the sessionId in agentview-hidden.json as the UI safety net
+    //   L1) Forget the avd-tracked / direct-PTY slot in our SessionRunner so
+    //       follow-up actions can't reattach to a deleted session.
     const claudeDir = join(homedir(), '.claude');
     const daemonDir = join(claudeDir, 'daemon');
     const jobsDir = join(claudeDir, 'jobs');
@@ -334,9 +339,20 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
       try {
         const short = sid.slice(0, 8);
 
-        // D) Mark hidden first — scanSessions filters this immediately so the
-        // card disappears from the grid even if a respawn races us.
+        // D0) Mark hidden first — scanSessions filters this immediately so
+        // the card disappears from the grid even if a respawn races us.
         await markHidden(sid);
+
+        // L0) Tear down OUR process's watchers/tails before wiping files.
+        // Order matters: if the watcher polls a deleted jsonl it churns
+        // ENOENT, and the prompt scanner on a dead ptySock leaks the FIFO
+        // open handle.
+        try { liveWatcher.unwatchConversation(sid); } catch { /* ignore */ }
+        const tail = outputTails.get(sid);
+        if (tail) {
+          try { tail.handle.close(); } catch { /* ignore */ }
+          outputTails.delete(sid);
+        }
 
         // A) Remove daemon spawn-cues so a respawn can't reconstruct the
         // worker from a stale dispatch file or pid pin.
@@ -356,6 +372,14 @@ export function registerSessions({ runner, liveWatcher, runningList }: SessionDe
           try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ }
         }
         await fs.rm(join(jobsDir, short), { recursive: true, force: true });
+
+        // L1) Drop in-memory references so the renderer can't bring back a
+        // zombie via resume/cancel paths. cancel() also kills the local PTY
+        // for legacy (non-avd) sessions; forgetAvdSession drops the avd
+        // metadata. Both are best-effort and idempotent — if neither has the
+        // sid, nothing happens.
+        try { runner.cancel(sid); } catch { /* not a local slot */ }
+        try { runner.forgetAvdSession(sid); } catch { /* not avd-tracked */ }
 
         deleted.push(sid);
       } catch (err) {
