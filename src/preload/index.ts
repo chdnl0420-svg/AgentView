@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { EVT, IPC, type AgentViewApi } from '@shared/ipc-contracts';
 import type {
   BgSession,
@@ -82,12 +82,22 @@ const api: AgentViewApi = {
     }
   },
   commands: {
-    list: () => ipcRenderer.invoke(IPC.CommandsList)
+    list: (cwd) => ipcRenderer.invoke(IPC.CommandsList, cwd ?? null)
   },
   picker: {
     directory: (defaultPath) => ipcRenderer.invoke(IPC.PickDirectory, defaultPath),
     files: (defaultPath) => ipcRenderer.invoke(IPC.PickFiles, defaultPath),
-    savePastedImage: (buffer, ext) => ipcRenderer.invoke(IPC.SavePastedImage, buffer, ext)
+    savePastedImage: (buffer, ext) => ipcRenderer.invoke(IPC.SavePastedImage, buffer, ext),
+    // Electron 32 removed `File.path`; drag/drop + paste handlers must use
+    // webUtils.getPathForFile() instead. Exposed here so renderer code can
+    // keep using a single typed API surface.
+    pathForFile: (file: File) => {
+      try {
+        return webUtils.getPathForFile(file);
+      } catch {
+        return '';
+      }
+    }
   },
   git: {
     branches: (cwd) => ipcRenderer.invoke(IPC.GitBranches, cwd),

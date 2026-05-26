@@ -375,15 +375,28 @@ function ToolUseBubble({
   );
 }
 
+// researcher item #76 — flag tool_result bubbles that look like errors
+// with a red accent border so failures jump out instead of blending
+// into the long tool-call stack. Matches common claude-cli error
+// patterns plus a generic "Error: …" prefix.
+function looksLikeError(text: string | undefined): boolean {
+  if (!text) return false;
+  const s = text.slice(0, 400);
+  return /\b(error|exception|traceback|fatal|failed|cannot|denied|forbidden|timeout)\b/i.test(s)
+    || /^\s*Error[:\s]/i.test(s)
+    || /^\s*\[[A-Z]+\]\s*Error/.test(s);
+}
+
 function ToolResultBubble({ m, fresh }: { m: ConversationMessage; fresh: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const answer = parseAskUserQuestionResult(m.text);
   const summary = answer ? answerSummary(answer) : summarizeToolResult(m.text || '');
   const label = answer ? '🙋 사용자 답변' : '↩ 결과';
+  const isError = !answer && looksLikeError(m.text);
   return (
-    <div className="msg tool">
-      <div className="avatar">↩</div>
-      <div className={`bubble tool-bubble ${fresh ? 'fresh' : ''}`}>
+    <div className={`msg tool ${isError ? 'tool-error' : ''}`}>
+      <div className="avatar">{isError ? '⚠' : '↩'}</div>
+      <div className={`bubble tool-bubble ${fresh ? 'fresh' : ''} ${isError ? 'tool-bubble-error' : ''}`}>
         <button
           type="button"
           className="tool-header"
@@ -423,20 +436,27 @@ export function renderMessages(
   messages: ConversationMessage[],
   freshIds: Set<string>,
   sessionId: string,
-  onAnswer: (text: string) => void | Promise<void>
+  onAnswer: (text: string) => void | Promise<void>,
+  onlyMine: boolean = false
 ): React.ReactNode[] {
+  // "내 메시지만 보기" — keep only user-authored text turns. Tool calls,
+  // assistant replies, and system/meta noise are filtered out entirely so
+  // the user can scan their own prompts in isolation.
+  const visible = onlyMine
+    ? messages.filter((m) => m.role === 'user' && m.kind !== 'tool_use' && m.kind !== 'tool_result')
+    : messages;
   const out: React.ReactNode[] = [];
   let i = 0;
-  while (i < messages.length) {
-    const m = messages[i];
+  while (i < visible.length) {
+    const m = visible[i];
     if (m.kind === 'tool_use' || m.kind === 'tool_result') {
       const group: ConversationMessage[] = [m];
       let j = i + 1;
       while (
-        j < messages.length &&
-        (messages[j].kind === 'tool_use' || messages[j].kind === 'tool_result')
+        j < visible.length &&
+        (visible[j].kind === 'tool_use' || visible[j].kind === 'tool_result')
       ) {
-        group.push(messages[j]);
+        group.push(visible[j]);
         j++;
       }
       const groupFresh = group.some((g) => freshIds.has(g.uuid));

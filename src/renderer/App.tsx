@@ -1,13 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { BgSession, NewSessionInput } from '@shared/types';
 import { SessionList } from './components/SessionList';
 import { SessionDetail } from './components/SessionDetail';
-import { SessionsGrid } from './components/SessionsGrid';
 import { InputBar } from './components/InputBar';
 import { UpdateBanner } from './components/UpdateBanner';
 import { SpotlightTour } from './components/SpotlightTour';
 import { WindowChrome } from './components/WindowChrome';
-import { isEmptyDeadSession, type SessionFilter } from './lib/sessionFilters';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { isEmptyDeadSession } from './lib/sessionFilters';
 import {
   PENDING_PREFIX,
   makeTempId,
@@ -24,8 +24,6 @@ import { useClaudeStatus } from './state/useClaudeStatus';
 import { useClock } from './state/useClock';
 import { useBackForwardNav } from './state/useBackForwardNav';
 import { useRunEventsToast } from './state/useRunEventsToast';
-import { useDeleteMode } from './state/useDeleteMode';
-import { useViewMode } from './state/useViewMode';
 
 const DEFAULT_CWD = 'D:\\Project\\VisualAgents';
 
@@ -38,27 +36,49 @@ export default function App() {
   const { renames, refresh: refreshRenames, activeBackend } = useRenames();
   const claudeStatus = useClaudeStatus();
   const now = useClock();
-  const { viewMode, viewModeRef, toggleViewMode } = useViewMode();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Set<SessionFilter>>(
-    () => new Set(['running', 'waiting', 'completed'])
-  );
   const { toast, setToast } = useRunEventsToast(reloadSessions);
-  const notify = useCallback(
-    (kind: 'error' | 'info', text: string) => setToast({ kind, text }),
-    [setToast]
-  );
-  const {
-    deleteMode,
-    selectedForDelete,
-    toggleDeleteMode,
-    toggleDeleteSelection,
-    performBulkDelete
-  } = useDeleteMode({ onReload: reloadSessions, notify });
 
   useBackForwardNav(selectedId, setSelectedId);
 
-  const gridScrollRef = useRef<number>(0);
+  // Global keyboard shortcuts (researcher items #43/#213 Ctrl+N, #220 F6,
+  // #370 Esc to close, #227 Esc → popup close):
+  //   Ctrl/Cmd+N  → open the "new task" composer (clears selection).
+  //   F6          → cycle focus between the sidebar and the workspace
+  //                 region so keyboard-only users do not have to Tab
+  //                 across the whole UI just to switch panels.
+  //   Esc         → if a session is open, fall back to the dashboard so
+  //                 the user always has a one-key escape route.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const isEditable =
+        tag === 'input' || tag === 'textarea' || (target?.isContentEditable ?? false);
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'n') {
+        if (isEditable) return;
+        e.preventDefault();
+        setSelectedId(null);
+        return;
+      }
+      if (e.key === 'F6') {
+        e.preventDefault();
+        // Toggle focus between .session-list (sidebar) and
+        // .single-workspace (right pane). Both have tabIndex / focusable
+        // children so document.activeElement gives a reasonable signal.
+        const sidebar = document.querySelector('.session-list') as HTMLElement | null;
+        const workspace = document.querySelector('.single-workspace') as HTMLElement | null;
+        const inSidebar = sidebar?.contains(document.activeElement);
+        if (inSidebar && workspace) {
+          (workspace.querySelector<HTMLElement>('[tabindex],input,textarea,button') ?? workspace).focus();
+        } else if (sidebar) {
+          sidebar.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const sessionsList = useMemo(() => {
     const real = (scan?.sessions ?? []).filter((s) => !isEmptyDeadSession(s));
@@ -145,10 +165,9 @@ export default function App() {
         setPending((prev) =>
           prev.map((p) => (p.tempId === tempId ? { ...p, realSessionId } : p))
         );
-        // In single mode, auto-select the newly started session
-        if (viewModeRef.current === 'single') {
-          setSelectedId(realSessionId);
-        }
+        // Single mode is the only mode now — always auto-select the newly
+        // started session so the user lands on its detail view immediately.
+        setSelectedId(realSessionId);
         for (const delay of [400, 900, 2000, 4000, 6500]) {
           window.setTimeout(() => reloadSessions(), delay);
         }
@@ -156,7 +175,7 @@ export default function App() {
         setPending((prev) => prev.filter((p) => p.tempId !== tempId));
       }
     },
-    [reloadSessions, setPending, viewModeRef]
+    [reloadSessions, setPending]
   );
 
   const toastNode = toast ? (
@@ -183,172 +202,73 @@ export default function App() {
       </div>
     ) : null;
 
-  // Card mode: open session → fullscreen detail
-  if (selected && viewMode === 'cards') {
-    return (
-      <div className="app no-chrome detail-only">
-        <WindowChrome />
-        <UpdateBanner />
-        {claudeStatusBanner}
-        <SpotlightTour />
-        <SessionDetail
-          session={selected}
-          agents={agents}
-          running={running}
-          onBack={() => {
-            refreshRenames();
-            setSelectedId(null);
-          }}
-          draft={draftsRef.current.get(selected.sessionId)}
-          onDraftChange={(d) => setDraft(selected.sessionId, d)}
-          queue={queues[selected.sessionId] ?? []}
-          onQueueChange={(updater) => setQueue(selected.sessionId, updater)}
-          onForked={(_old, next) => {
-            setSelectedId(next);
-            setToast({
-              kind: 'info',
-              text:
-                '이 에이전트가 CLI에서 이미 실행 중이라 새 분기 세션으로 이어갑니다. 원본은 그대로 두고 새 sid로 진행됩니다.'
-            });
-            window.setTimeout(reloadSessions, 600);
-          }}
-        />
-        {toastNode}
-      </div>
-    );
-  }
-
-  // Single mode: SessionList (left) + work area (right)
-  if (viewMode === 'single') {
-    return (
-      <div className="app no-chrome">
-        <WindowChrome />
-        <UpdateBanner />
-        {claudeStatusBanner}
-        <SpotlightTour />
-        <div className="dashboard single">
-          <SessionList
-            sessions={sessionsList}
-            selectedId={selectedId}
-            onSelect={(s) => {
-              if (s.sessionId.startsWith(PENDING_PREFIX)) {
-                setToast({ kind: 'info', text: '에이전트가 시작 중입니다. 잠시만 기다려주세요.' });
-                return;
-              }
-              setSelectedId(s.sessionId);
-            }}
-            onNewClick={() => setSelectedId(null)}
-            renames={renames}
-            now={now}
-            viewMode={viewMode}
-            onViewModeToggle={toggleViewMode}
-          />
-          <div className="single-workspace">
-            {selected ? (
-              <SessionDetail
-                session={selected}
-                agents={agents}
-                running={running}
-                onBack={() => {
-                  refreshRenames();
-                  setSelectedId(null);
-                }}
-                draft={draftsRef.current.get(selected.sessionId)}
-                onDraftChange={(d) => setDraft(selected.sessionId, d)}
-                queue={queues[selected.sessionId] ?? []}
-                onQueueChange={(updater) => setQueue(selected.sessionId, updater)}
-                onForked={(_old, next) => {
-                  setSelectedId(next);
-                  setToast({
-                    kind: 'info',
-                    text:
-                      '이 에이전트가 CLI에서 이미 실행 중이라 새 분기 세션으로 이어갑니다. 원본은 그대로 두고 새 sid로 진행됩니다.'
-                  });
-                  window.setTimeout(reloadSessions, 600);
-                }}
-              />
-            ) : (
-              <div className="single-new-task">
-                <InputBar
-                  mode="new"
-                  agents={agents}
-                  defaultCwd={DEFAULT_CWD}
-                  draft={newDraft}
-                  onDraftChange={setNewDraft}
-                  onSend={onStartNewSession}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-        {toastNode}
-      </div>
-    );
-  }
-
-  // Card mode: session grid + input bar
+  // Single mode is the only mode after P1: left sidebar with the session
+  // list, right pane shows the selected session detail (or the "new task"
+  // composer when nothing is selected). Wrapped in ErrorBoundary so a
+  // render failure shows a friendly recovery screen instead of a blank
+  // window (researcher item #466).
   return (
+    <ErrorBoundary>
     <div className="app no-chrome">
       <WindowChrome />
       <UpdateBanner />
       {claudeStatusBanner}
       <SpotlightTour />
-      <div className="dashboard">
-        <div
-          className="grid-wrap"
-          ref={(el) => {
-            if (!el) return;
-            // Restore the scroll position from the last time we left the grid.
-            if (gridScrollRef.current) el.scrollTop = gridScrollRef.current;
+      <div className="dashboard single">
+        <SessionList
+          sessions={sessionsList}
+          selectedId={selectedId}
+          onSelect={(s) => {
+            if (s.sessionId.startsWith(PENDING_PREFIX)) {
+              setToast({ kind: 'info', text: '에이전트가 시작 중입니다. 잠시만 기다려주세요.' });
+              return;
+            }
+            setSelectedId(s.sessionId);
           }}
-          onScroll={(e) => {
-            gridScrollRef.current = (e.target as HTMLDivElement).scrollTop;
-          }}
-        >
-          <SessionsGrid
-            sessions={sessionsList}
-            loading={loading}
-            selectedId={null}
-            onSelect={(s) => {
-              if (deleteMode) {
-                toggleDeleteSelection(s.sessionId);
-                return;
-              }
-              // Pre-realSessionId placeholders have a temp id that nothing on
-              // disk knows about — opening detail would render an empty shell.
-              // The card swaps to the real id automatically as soon as
-              // newSession resolves; until then a click is a no-op.
-              if (s.sessionId.startsWith(PENDING_PREFIX)) {
-                setToast({ kind: 'info', text: '에이전트가 시작 중입니다. 잠시만 기다려주세요.' });
-                return;
-              }
-              setSelectedId(s.sessionId);
-            }}
-            now={now}
-            flashMap={flash}
-            filter={filter}
-            onFilterChange={setFilter}
-            renames={renames}
-            deleteMode={deleteMode}
-            selectedForDelete={selectedForDelete}
-            onToggleDelete={toggleDeleteSelection}
-            onToggleDeleteMode={toggleDeleteMode}
-            onPerformBulkDelete={performBulkDelete}
-            viewMode={viewMode}
-            onViewModeToggle={toggleViewMode}
-          />
-        </div>
-
-        <InputBar
-          mode="new"
-          agents={agents}
-          defaultCwd={DEFAULT_CWD}
-          draft={newDraft}
-          onDraftChange={setNewDraft}
-          onSend={onStartNewSession}
+          onNewClick={() => setSelectedId(null)}
+          renames={renames}
+          now={now}
         />
+        <div className="single-workspace">
+          {selected ? (
+            <SessionDetail
+              session={selected}
+              agents={agents}
+              running={running}
+              onBack={() => {
+                refreshRenames();
+                setSelectedId(null);
+              }}
+              draft={draftsRef.current.get(selected.sessionId)}
+              onDraftChange={(d) => setDraft(selected.sessionId, d)}
+              queue={queues[selected.sessionId] ?? []}
+              onQueueChange={(updater) => setQueue(selected.sessionId, updater)}
+              onForked={(_old, next) => {
+                setSelectedId(next);
+                setToast({
+                  kind: 'info',
+                  text:
+                    '이 에이전트가 CLI에서 이미 실행 중이라 새 분기 세션으로 이어갑니다. 원본은 그대로 두고 새 sid로 진행됩니다.'
+                });
+                window.setTimeout(reloadSessions, 600);
+              }}
+            />
+          ) : (
+            <div className="single-new-task">
+              <InputBar
+                mode="new"
+                agents={agents}
+                defaultCwd={DEFAULT_CWD}
+                draft={newDraft}
+                onDraftChange={setNewDraft}
+                onSend={onStartNewSession}
+              />
+            </div>
+          )}
+        </div>
       </div>
       {toastNode}
     </div>
+    </ErrorBoundary>
   );
 }

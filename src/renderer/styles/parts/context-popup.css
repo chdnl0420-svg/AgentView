@@ -11,11 +11,12 @@
   z-index: 800;
 }
 .context-popup {
-  /* Floats just under the donut button. The parent .detail-head is
-     position:relative + min-width:0; we anchor the popup at top-right
-     so it's visually tied to the donut control. */
-  position: absolute;
-  top: 60px;
+  /* Anchored by inline style (bottom/left) computed from the donut button's
+     getBoundingClientRect, so the popup must use viewport coordinates —
+     position: fixed instead of absolute. The button now lives in the
+     composer footer at the bottom of the page, so the popup opens upward. */
+  position: fixed;
+  bottom: 80px;
   right: 16px;
   z-index: 801;
   background: var(--bg-elev-1);
@@ -27,15 +28,16 @@
   display: flex; flex-direction: column; gap: 8px;
   animation: scale-in 180ms cubic-bezier(0.16,1,0.3,1);
 }
-/* Little arrow pointing up toward the donut button. */
+/* Little arrow pointing down toward the donut button (popup is anchored
+   above the trigger now). */
 .context-popup::before {
   content: '';
   position: absolute;
-  top: -7px; right: 24px;
+  bottom: -7px; right: 24px;
   width: 12px; height: 12px;
   background: var(--bg-elev-1);
-  border-left: 1px solid var(--border-strong);
-  border-top: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
   transform: rotate(45deg);
 }
 .context-popup-head {

@@ -36,6 +36,183 @@
   font-size: 12px;
 }
 
+.session-list-search-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 6px 12px 4px;
+  flex-shrink: 0;
+}
+.session-list-search-icon {
+  position: absolute;
+  left: 22px;
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+.session-list-search {
+  flex: 1;
+  height: 28px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 24px 0 26px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+.session-list-search::placeholder { color: var(--text-muted); }
+.session-list-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.session-list-search-clear {
+  position: absolute;
+  right: 16px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 0;
+  background: var(--bg-elev-3);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.session-list-search-clear:hover { color: var(--text-primary); background: var(--bg-elev-4, #2b2f3a); }
+
+/* Filter trigger button — small slider icon next to "+ 새 작업".
+   Claude Code Desktop 2026.04 sidebar pattern: clicking opens a
+   cascading popup with Status / Project / Environment / Last activity /
+   Group by / Sort by / Clear filters. */
+.session-list-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.session-list-filter-trigger:hover {
+  background: var(--bg-elev-2);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.session-list-filter-trigger.has-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Cascading filter popup */
+.sl-filter-popup-root {
+  z-index: 2200;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.sl-filter-popup {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 4px;
+  min-width: 220px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.sl-filter-submenu-wrapper {
+  display: flex;
+  align-items: flex-start;
+}
+.sl-filter-submenu {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 4px;
+  min-width: 200px;
+  max-height: 60vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.sl-filter-submenu-scroll {
+  max-height: 50vh;
+}
+.sl-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  width: 100%;
+}
+.sl-filter-row:hover,
+.sl-filter-row.on {
+  background: var(--bg-elev-3, #21263a);
+}
+.sl-filter-row > :first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sl-filter-row-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sl-filter-value {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.sl-filter-value.accent {
+  color: var(--accent);
+  font-weight: 500;
+}
+.sl-filter-caret {
+  color: var(--text-muted);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.sl-filter-row.checked {
+  color: var(--text-primary);
+}
+.sl-filter-check {
+  color: var(--accent);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.sl-filter-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+.sl-filter-clear {
+  color: var(--text-secondary);
+}
+.sl-filter-clear:hover {
+  color: var(--text-primary);
+}
+
 .session-list-body {
   flex: 1;
   overflow-y: auto;
@@ -50,12 +227,71 @@
   font-size: 12px;
 }
 
-.session-list-item {
+.session-list-group {
+  display: flex;
+  flex-direction: column;
+}
+.session-list-group + .session-list-group {
+  margin-top: 4px;
+}
+.session-list-group-header {
+  padding: 8px 10px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* Collapsible group header — Group by 가 활성일 때 헤더를 버튼으로 만들어
+   클릭 한 번에 그 그룹을 접고/펼친다. caret 은 접힘 상태에 따라 ▸/▾. */
+.session-list-group-header.collapsible {
   display: flex;
   align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.session-list-group-header.collapsible:hover {
+  background: var(--bg-elev-2);
+  color: var(--text-primary);
+}
+.session-list-group-header.collapsible:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.session-list-group-caret {
+  display: inline-block;
+  width: 10px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  text-transform: none;
+}
+.session-list-group-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-list-group-count {
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.session-list-item {
+  display: flex;
+  align-items: flex-start;
   gap: 8px;
   width: 100%;
-  padding: 7px 10px;
+  padding: 8px 10px;
   border-radius: 7px;
   background: transparent;
   border: 1px solid transparent;
@@ -66,6 +302,162 @@
   transition: all 0.12s;
   user-select: none;
   -webkit-user-select: none;
+}
+.session-list-item .session-list-dot {
+  margin-top: 6px;
+}
+.session-list-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.session-list-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+.session-list-status {
+  flex-shrink: 0;
+  font-weight: 500;
+  font-size: 10px;
+}
+.session-list-status.running   { color: var(--running); }
+.session-list-status.waiting,
+.session-list-status.idle      { color: var(--waiting); }
+.session-list-status.completed { color: var(--completed); }
+.session-list-status.finished  { color: var(--text-muted); }
+.session-list-status.crashed   { color: var(--crashed); }
+
+.session-list-preview {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-list-pin-icon {
+  color: var(--accent);
+  font-size: 11px;
+  margin-right: 2px;
+}
+.session-list-name mark.hl,
+.session-list-preview mark.hl {
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 0 1px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+.session-list-rename-input {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  outline: none;
+  width: 100%;
+}
+
+.session-list-menu {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.32);
+  z-index: 1000;
+}
+.session-list-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.session-list-menu-item:hover:not(:disabled) {
+  background: var(--bg-elev-3);
+}
+.session-list-menu-item:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.session-list-menu-item.danger {
+  color: var(--crashed);
+}
+.session-list-menu-item.danger:hover {
+  background: rgba(244,116,116,0.16);
+}
+.session-list-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+/* Menu item layout: label fills, kbd/caret pinned right.
+   contextMenu submenu (그룹으로 이동) hangs off the parent row. */
+.session-list-menu-item {
+  position: relative;
+  justify-content: space-between;
+}
+.session-list-menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-list-menu-kbd {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.85;
+}
+.session-list-menu-caret {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+.session-list-menu-item.checked {
+  background: var(--accent-soft, rgba(110, 168, 255, 0.16));
+}
+.session-list-menu-item.checked::before {
+  content: '✓';
+  position: absolute;
+  left: -4px;
+  color: var(--accent, #6ea8ff);
+  font-size: 11px;
+}
+.session-list-menu-empty {
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.session-list-menu-submenu {
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  margin-left: 4px;
+  min-width: 160px;
+  z-index: 1001;
 }
 
 .session-list-item:hover {

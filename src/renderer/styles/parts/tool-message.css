@@ -1,6 +1,18 @@
 /* tool-message.css — .bubble.tool-bubble (collapsible) + .tool-header + .tool-input/output + .tool-detail.ask + .ask-q/.ask-header/.ask-question/.ask-options/.ask-answer
    Extracted from global.css lines 994-1095 during 20260524T1217Z-refactor. */
 
+/* researcher item #76 — tool_result bubble flagged as error gets a
+   red border + soft red background so a failing tool stands out from
+   the surrounding successful calls. */
+.bubble.tool-bubble.tool-bubble-error {
+  border-left: 3px solid var(--crashed);
+  background: rgba(244, 116, 116, 0.06);
+}
+.msg.tool.tool-error .avatar {
+  color: var(--crashed);
+  background: rgba(244, 116, 116, 0.12);
+}
+
 /* Tool message (collapsible) */
 .bubble.tool-bubble {
   padding: 0;
