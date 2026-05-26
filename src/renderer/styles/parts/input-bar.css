@@ -164,7 +164,12 @@
   border-radius: 8px;
   padding: 8px 10px;
   resize: none;
-  min-height: 48px; max-height: 220px;
+  /* Height is driven by JS auto-resize (scrollHeight) capped at 3 lines.
+     Keep min compact enough for a single line; CSS max-height mirrors the
+     JS cap so very long drafts scroll inside the box. */
+  min-height: 0;
+  max-height: calc(14px * 1.55 * 3 + 16px);
+  overflow-y: auto;
   outline: none; color: var(--text-primary);
   font-size: 14px; line-height: 1.55;
   font-family: var(--font-sans);
@@ -172,34 +177,137 @@
 .input-box:focus { border: 0; box-shadow: none; }
 
 .input-send {
-  display: flex; flex-direction: column;
-  justify-content: flex-end; gap: 4px;
-  padding: 0 2px 2px 6px;
-  min-width: 132px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 0 2px 4px 6px;
 }
-.input-send .btn-shortcut {
-  font-size: 10.5px;
-  font-weight: 400;
-  opacity: 0.75;
-  margin-left: 6px;
-  display: inline-block;
-  /* Fixed width — keeps the shortcut hint slot identical width whether
-     the label is 'Enter' or 'Ctrl+Enter', so toggling the option does
-     not resize the button. */
-  width: 70px;
-  text-align: left;
-  letter-spacing: 0;
-  vertical-align: middle;
+.input-footer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  padding: 0 4px;
+  min-height: 22px;
 }
-.input-send .btn {
+.input-footer-extras {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.input-footer-extras .dropdown-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.input-footer-extras .footer-right-group {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.input-footer-extras .footer-right-group .badge-popup {
+  /* Right-anchored popup so the menu stays inside the viewport when the
+     trigger sits near the right edge of the composer. */
+  left: auto;
+  right: 0;
+}
+.input-footer-extras .badge-popup {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
   border-radius: 10px;
-  padding: 9px 14px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-  width: 160px;
+  background: var(--bg-elev-2);
+  box-shadow: var(--shadow-card);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
-.input-send .btn.primary {
+.input-footer-extras .badge-popup-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+  padding: 4px 8px 6px;
+}
+.input-footer-extras .badge-popup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+}
+.input-footer-extras .badge-popup-item:hover {
+  background: var(--bg-elev-3);
+}
+.input-footer-extras .badge-popup-item.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.input-footer-extras .badge-popup-check {
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 12px;
+}
+.input-footer-extras .badge-popup-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.input-footer-extras .badge-popup-shortcut {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+.input-footer-extras .badge-popup-divider {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+.input-hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+  flex: 0 0 auto;
+}
+.input-send .btn.icon-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  line-height: 0;
+}
+.input-send .btn.icon-btn .icon-glyph {
+  display: block;
+}
+.input-send .btn.icon-btn .icon-glyph.spinner {
+  font-size: 14px;
+  line-height: 1;
+}
+.input-send .btn.icon-btn.primary {
   box-shadow: 0 1px 0 rgba(0,0,0,0.12), 0 0 12px var(--accent-soft);
 }
-.input-send .btn.primary:disabled { box-shadow: none; }
-.input-send .hint { font-size: 10.5px; color: var(--text-muted); text-align: right; }
+.input-send .btn.icon-btn.primary:disabled { box-shadow: none; }

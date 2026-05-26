@@ -56,6 +56,8 @@ interface BaseProps {
   onDraftChange?: (draft: InputDraft) => void;
   /** localStorage key for command history (most-recent first). */
   historyKey?: string;
+  /** Extra controls rendered in the bottom row, left of the keyboard hint. */
+  footerExtras?: React.ReactNode;
 }
 
 interface NewProps extends BaseProps {
@@ -252,6 +254,20 @@ export function InputBar(props: InputBarProps) {
   const [slashFocus, setSlashFocus] = useState(0);
   const [caret, setCaret] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize the textarea between 1 line (default) and 3 lines. Beyond
+  // that we keep the box at the 3-line cap and let it scroll internally so
+  // the composer never pushes the chat area around for a long draft.
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    const cs = getComputedStyle(ta);
+    const lineHeight = parseFloat(cs.lineHeight) || 22;
+    const paddingY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const maxH = lineHeight * 3 + paddingY;
+    ta.style.height = `${Math.min(ta.scrollHeight, maxH)}px`;
+  }, [prompt]);
 
   // History navigation (ArrowUp / ArrowDown). historyIdx === -1 means we're
   // editing a fresh draft; >=0 means we're showing history[idx]. The
@@ -1003,12 +1019,13 @@ export function InputBar(props: InputBarProps) {
             }
           }}
           disabled={disabled}
-          rows={2}
+          rows={1}
         />
         <div className="input-send">
           {showCancelButton ? (
             <button
-              className="btn danger"
+              type="button"
+              className="btn icon-btn danger"
               onClick={() => {
                 if (cancelling) return;
                 setCancelling(true);
@@ -1030,27 +1047,66 @@ export function InputBar(props: InputBarProps) {
                 }
               }}
               disabled={cancelling}
-              title="에이전트의 현재 작업 중단 (ESC). 마지막 메시지가 입력창에 복원됩니다."
+              title="중지 Esc"
+              aria-label="중지"
             >
-              {cancelling ? '⌛ 중지 중…' : '⏹ 중지'}
+              {cancelling ? (
+                <span className="icon-glyph spinner" aria-hidden="true">⌛</span>
+              ) : (
+                <svg
+                  className="icon-glyph"
+                  viewBox="0 0 16 16"
+                  width="14"
+                  height="14"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="3" width="10" height="10" rx="1.5" fill="currentColor" />
+                </svg>
+              )}
             </button>
           ) : (
-            <button className="btn primary" onClick={send} disabled={!canSend}>
-              {sending ? '전송 중…' : (
-                <>
-                  {props.buttonLabel ?? '전송'}
-                  <span className="btn-shortcut">{enterToSend ? 'Enter' : 'Ctrl+Enter'}</span>
-                </>
+            <button
+              type="button"
+              className="btn icon-btn primary"
+              onClick={send}
+              disabled={!canSend}
+              title={`보내기 ${enterToSend ? 'Enter' : 'Ctrl+Enter'}`}
+              aria-label="보내기"
+            >
+              {sending ? (
+                <span className="icon-glyph spinner" aria-hidden="true">⌛</span>
+              ) : (
+                <svg
+                  className="icon-glyph"
+                  viewBox="0 0 16 16"
+                  width="14"
+                  height="14"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M8 13V3M3.5 7.5L8 3l4.5 4.5"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                </svg>
               )}
             </button>
           )}
-          <span className="hint">
-            {showCancelButton
-              ? '입력하면 전송으로 전환'
-              : enterToSend
-              ? 'Shift+Enter 줄바꿈 · ↑↓ 히스토리'
-              : 'Enter 줄바꿈 · ↑↓ 히스토리'}
-          </span>
+        </div>
+      </div>
+      <div className="input-footer-bar">
+        {props.footerExtras && (
+          <div className="input-footer-extras">{props.footerExtras}</div>
+        )}
+        <div className="input-hint">
+          {showCancelButton
+            ? '입력하면 전송으로 전환'
+            : enterToSend
+            ? 'Shift+Enter 줄바꿈 · ↑↓ 히스토리'
+            : 'Enter 줄바꿈 · ↑↓ 히스토리'}
         </div>
       </div>
     </div>

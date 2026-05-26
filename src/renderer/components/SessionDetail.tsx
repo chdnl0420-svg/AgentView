@@ -195,10 +195,18 @@ export function SessionDetail({
   const sendingRef = useRef(false);
   const lastSentRef = useRef<{ sig: string; at: number } | null>(null);
 
-  // "Busy" purely tracks the agent's reported status. A live PTY that's just
-  // sitting idle waiting for the next prompt is NOT busy — the card already
-  // says 대기, and the chat input must accept the next message immediately.
-  const busy = session.alive && session.status === 'running';
+  // "Busy" tracks the agent's reported status, but with a turn-ended guard.
+  // claude harness can keep status='running' indefinitely when a tool_use
+  // (e.g. a hung `npm | tail` pipe on Windows) never returns a tool_result,
+  // even though the agent has already emitted its final assistant text.
+  // Treat the most recent message being an assistant text bubble as a
+  // turn-end signal so the "실행 중 41m" thinking bubble doesn't linger.
+  const lastMsg = data?.messages?.[data.messages.length - 1];
+  const turnEnded =
+    lastMsg?.role === 'assistant' &&
+    lastMsg.kind === 'text' &&
+    !!lastMsg.text?.trim();
+  const busy = session.alive && session.status === 'running' && !turnEnded;
 
   // tick every second while busy to keep the "작업 중" line live
   const [tick, setTick] = useState(Date.now());
@@ -358,13 +366,19 @@ export function SessionDetail({
     return () => { cancelled = true; window.clearInterval(t); };
   }, [contextPanelOpen]);
   const contextBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [contextPanelPos, setContextPanelPos] = useState<{ top: number; left: number } | null>(null);
+  const [contextPanelPos, setContextPanelPos] = useState<{ bottom: number; left: number } | null>(null);
   useEffect(() => {
     if (!contextPanelOpen) { setContextPanelPos(null); return; }
     const btn = contextBtnRef.current;
     if (!btn) return;
     const r = btn.getBoundingClientRect();
-    setContextPanelPos({ top: r.bottom + 8, left: Math.max(8, r.right - 340) });
+    // Anchor popup ABOVE the trigger — the context button now sits at the
+    // bottom of the screen in the composer footer, so dropping the popup
+    // downward would push it off-screen.
+    setContextPanelPos({
+      bottom: window.innerHeight - r.top + 8,
+      left: Math.max(8, r.right - 340)
+    });
   }, [contextPanelOpen]);
   // Context window size by model. Falls back to 200k for unknown models.
   // Opus / Sonnet with the 1M context flag is detected by the model string
@@ -713,7 +727,39 @@ export function SessionDetail({
   // Pick the most informative model label we can: the one from the latest
   // assistant message (matches what claude actually used), falling back to
   // a short tag from the meta if we haven't seen an assistant turn yet.
-  const modelLabel = turnInfo.model || data?.meta.agentSetting || null;
+  const rawModel = turnInfo.model || data?.meta.agentSetting || null;
+  // Display format: strip `claude-` prefix and rewrite the trailing dashed
+  // version into "X.Y" (e.g. `claude-sonnet-4-6` → `sonnet 4.6`). Anything
+  // we don't recognise falls back to the original string.
+  const formatModelName = (m: string): string => {
+    if (!m) return m;
+    let s = m.replace(/^claude[-_]/i, '');
+    s = s.replace(/-(\d+)-(\d+)(?=$|[-_])/g, ' $1.$2');
+    return s;
+  };
+  // Reasoning effort ("작업량") — local-only, persisted per session. There is
+  // no backend setter today, so this is a UI-only annotation appended to the
+  // model badge so the user can keep track of their intended setting.
+  type Effort = 'low' | 'medium' | 'high' | 'highest' | 'max';
+  const EFFORT_LABELS: Record<Effort, string> = {
+    low: '낮음',
+    medium: '보통',
+    high: '높음',
+    highest: '매우 높음',
+    max: 'Max'
+  };
+  const effortKey = `view.effort.${session.sessionId}`;
+  const [effort, setEffortState] = useState<Effort>(() => loadJSON<Effort>(effortKey, 'high'));
+  useEffect(() => {
+    setEffortState(loadJSON<Effort>(effortKey, 'high'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.sessionId]);
+  const setEffort = (next: Effort) => {
+    setEffortState(next);
+    saveJSON(effortKey, next);
+  };
+  const modelName = rawModel ? formatModelName(rawModel) : null;
+  const modelLabel = modelName ? `${modelName} · ${EFFORT_LABELS[effort]}` : null;
 
   const [forking, setForking] = useState(false);
   const onForkClick = async () => {
@@ -741,141 +787,73 @@ export function SessionDetail({
   return (
     <div className="detail-page">
       <header className="detail-head">
-        <button className="btn sm" onClick={onBack} title="에이전트 목록으로">
-          ← 뒤로
-        </button>
         <div className="title">
-          {editingName ? (
-            <input
-              autoFocus
-              className="title-edit"
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  commitRename();
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setEditingName(false);
-                  setDraftName(displayName);
-                }
-              }}
-            />
-          ) : (
-            <h3 className="title-name">
-              <span
-                className="title-text"
-                title="클릭해서 이름 변경"
-                onClick={() => setEditingName(true)}
-              >
-                {displayName}
-              </span>
-              <button
-                type="button"
-                className="title-edit-btn"
-                onClick={() => setEditingName(true)}
-                title="세션 이름 변경"
-                aria-label="세션 이름 변경"
-              >
-                ✎
-              </button>
-              {overrideName && (
+          <div className="title-row">
+            <span
+              className={`status-tag ${session.status}`}
+              title={statusLabel(session)}
+              aria-label={`상태: ${statusLabel(session)}`}
+            >
+              {statusLabel(session)}
+            </span>
+            {editingName ? (
+              <input
+                autoFocus
+                className="title-edit"
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onBlur={commitRename}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitRename();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setEditingName(false);
+                    setDraftName(displayName);
+                  }
+                }}
+              />
+            ) : (
+              <h3 className="title-name">
+                <span
+                  className="title-text"
+                  title="클릭해서 이름 변경"
+                  onClick={() => setEditingName(true)}
+                >
+                  {displayName}
+                </span>
                 <button
                   type="button"
                   className="title-edit-btn"
-                  onClick={() => {
-                    saveRename(session.sessionId, null);
-                    setRenames(loadRenames());
-                    window.av.sessions
-                      .renameJob(session.sessionId, null)
-                      .catch(() => undefined);
-                  }}
-                  title="원래 이름으로 되돌리기"
-                  aria-label="이름 초기화"
+                  onClick={() => setEditingName(true)}
+                  title="세션 이름 변경"
+                  aria-label="세션 이름 변경"
                 >
-                  ↺
+                  ✎
                 </button>
-              )}
-            </h3>
-          )}
-          <div className="meta-row">
-            <span className={`status-tag ${session.status}`}>{statusLabel(session)}</span>
-            {data?.meta?.permissionMode && (
-              <button
-                type="button"
-                className="perm-tag clickable"
-                title="권한 모드 (다음 메시지부터 적용)"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setPermDropdownOpen((v) => !v)}
-              >
-                🛡 {permLabel(data.meta.permissionMode as string)}
-                <span className="caret">▾</span>
-              </button>
-            )}
-            {permDropdownOpen && (
-              <div className="badge-dropdown" role="menu" onMouseDown={(e) => e.stopPropagation()}>
-                {(['bypassPermissions','acceptEdits','default','plan'] as const).map((m) => (
+                {overrideName && (
                   <button
-                    key={m}
                     type="button"
-                    role="menuitem"
-                    onClick={async () => {
-                      setPermDropdownOpen(false);
-                      try {
-                        await window.av.sessions.setPermission(session.sessionId, m);
-                        setBadgeToast('권한이 다음 메시지부터 적용됩니다.');
-                      } catch {/* ignore */}
+                    className="title-edit-btn"
+                    onClick={() => {
+                      saveRename(session.sessionId, null);
+                      setRenames(loadRenames());
+                      window.av.sessions
+                        .renameJob(session.sessionId, null)
+                        .catch(() => undefined);
                     }}
-                  >{permLabel(m)}</button>
-                ))}
-              </div>
-            )}
-            {modelLabel && (
-              <button
-                type="button"
-                className="model-tag clickable"
-                title="모델 (다음 메시지부터 적용)"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={() => setModelDropdownOpen((v) => !v)}
-              >
-                🧠 {modelLabel}
-                <span className="caret">▾</span>
-              </button>
-            )}
-            {modelDropdownOpen && (
-              <div className="badge-dropdown" role="menu" onMouseDown={(e) => e.stopPropagation()}>
-                {(['opus','sonnet','haiku'] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    role="menuitem"
-                    onClick={async () => {
-                      setModelDropdownOpen(false);
-                      try {
-                        await window.av.sessions.setModel(session.sessionId, m);
-                        setBadgeToast('모델이 다음 메시지부터 적용됩니다.');
-                      } catch {/* ignore */}
-                    }}
-                  >{m}</button>
-                ))}
-              </div>
+                    title="원래 이름으로 되돌리기"
+                    aria-label="이름 초기화"
+                  >
+                    ↺
+                  </button>
+                )}
+              </h3>
             )}
             <button
-              ref={contextBtnRef}
               type="button"
-              className="context-donut"
-              onClick={() => setContextPanelOpen((v) => !v)}
-              aria-expanded={contextPanelOpen}
-              aria-label="컨텍스트 사용량 보기"
-              title={`컨텍스트 ${formatTokens(contextUsed)} / ${formatTokens(contextWindow)} (${contextPct}%)`}
-            >
-              <ContextDonut percent={contextPct} />
-            </button>
-            <button
-              type="button"
-              className="cwd-link"
+              className="cwd-link title-cwd"
               title={`폴더 열기: ${session.cwd}`}
               aria-label={`작업 폴더 열기: ${session.cwd}`}
               onClick={() => {
@@ -885,18 +863,6 @@ export function SessionDetail({
               }}
             >
               {session.cwd}
-            </button>
-            <button
-              type="button"
-              className={`filter-toggle ${onlyMine ? 'on' : ''}`}
-              title="내 메시지만 보기"
-              onClick={() => {
-                const next = !onlyMine;
-                setOnlyMine(next);
-                saveJSON('view.onlyMine.' + session.sessionId, next);
-              }}
-            >
-              👤 내 메시지만
             </button>
           </div>
           {badgeToast && (
@@ -915,7 +881,7 @@ export function SessionDetail({
                 onClick={() => setContextPanelOpen(false)}
                 aria-hidden="true"
               />
-              <div className="context-popup" role="dialog" aria-label="컨텍스트 사용량" style={contextPanelPos ? { top: contextPanelPos.top, left: contextPanelPos.left, right: 'auto' } : undefined}>
+              <div className="context-popup" role="dialog" aria-label="컨텍스트 사용량" style={contextPanelPos ? { bottom: contextPanelPos.bottom, left: contextPanelPos.left, top: 'auto', right: 'auto' } : undefined}>
                 <div className="context-popup-head">
                   <span className="context-popup-title">컨텍스트 사용량</span>
                   <button
@@ -1041,14 +1007,19 @@ export function SessionDetail({
                 </div>
               </div>
             )}
-            {renderMessages(data.messages, freshIds, session.sessionId, (prompt) =>
-              sendNow({
-                sessionId: session.sessionId,
-                prompt,
-                cwd: session.cwd,
-                agent: session.agent ?? null,
-                model: null
-              })
+            {renderMessages(
+              data.messages,
+              freshIds,
+              session.sessionId,
+              (prompt) =>
+                sendNow({
+                  sessionId: session.sessionId,
+                  prompt,
+                  cwd: session.cwd,
+                  agent: session.agent ?? null,
+                  model: null
+                }),
+              onlyMine
             )}
             {pendingPrompt && (
               <div className="msg permission">
@@ -1108,7 +1079,7 @@ export function SessionDetail({
                   )}
                   {turnInfo.recentAssistantText && (
                     <div className="thinking-sub thinking-sub-text">
-                      <span className="thinking-sub-label">최근 출력:</span>{' '}
+                      <span className="thinking-sub-label">최근 메시지:</span>{' '}
                       {turnInfo.recentAssistantText}
                     </div>
                   )}
@@ -1259,6 +1230,158 @@ export function SessionDetail({
           externalAlive
             ? '외부 에이전트에 직접 전송. Ctrl+Enter.'
             : '이 에이전트에 이어서 보낼 메시지. Ctrl+Enter.'
+        }
+        footerExtras={
+          <>
+            {data?.meta?.permissionMode && (
+              <div className="dropdown-anchor">
+                <button
+                  type="button"
+                  className="perm-tag clickable"
+                  title="권한 모드 (다음 메시지부터 적용)"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => {
+                    // Mutually-exclusive popups — opening one closes the other.
+                    setModelDropdownOpen(false);
+                    setPermDropdownOpen((v) => !v);
+                  }}
+                >
+                  🛡 {permLabel(data.meta.permissionMode as string)}
+                  <span className="caret">▾</span>
+                </button>
+                {permDropdownOpen && (
+                  <div
+                    className="badge-popup"
+                    role="menu"
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="badge-popup-title">권한 모드</div>
+                    {(['bypassPermissions','acceptEdits','default','plan'] as const).map((m) => {
+                      const active = data?.meta?.permissionMode === m;
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          role="menuitem"
+                          className={`badge-popup-item ${active ? 'active' : ''}`}
+                          onClick={async () => {
+                            setPermDropdownOpen(false);
+                            try {
+                              await window.av.sessions.setPermission(session.sessionId, m);
+                              setBadgeToast('권한이 다음 메시지부터 적용됩니다.');
+                            } catch {/* ignore */}
+                          }}
+                        >
+                          <span className="badge-popup-check" aria-hidden="true">
+                            {active ? '✓' : ''}
+                          </span>
+                          <span className="badge-popup-label">{permLabel(m)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            <button
+              type="button"
+              className={`filter-toggle ${onlyMine ? 'on' : ''}`}
+              title="내 메시지만 보기"
+              onClick={toggleOnlyMine}
+            >
+              👤 내 메시지만
+            </button>
+            <div className="footer-right-group">
+              {modelLabel && (
+                <div className="dropdown-anchor">
+                  <button
+                    type="button"
+                    className="model-tag clickable"
+                    title="모델 (다음 메시지부터 적용)"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => {
+                      // Mutually-exclusive popups — opening one closes the other.
+                      setPermDropdownOpen(false);
+                      setModelDropdownOpen((v) => !v);
+                    }}
+                  >
+                    🧠 {modelLabel}
+                    <span className="caret">▾</span>
+                  </button>
+                  {modelDropdownOpen && (
+                    <div
+                      className="badge-popup model-popup"
+                      role="menu"
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      <div className="badge-popup-title">모델</div>
+                      {([
+                        { value: 'opus', label: 'opus 4.7' },
+                        { value: 'sonnet', label: 'sonnet 4.6' },
+                        { value: 'haiku', label: 'haiku 4.5' }
+                      ] as const).map((opt, i) => {
+                        const active = (rawModel || '').toLowerCase().includes(opt.value);
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            role="menuitem"
+                            className={`badge-popup-item ${active ? 'active' : ''}`}
+                            onClick={async () => {
+                              setModelDropdownOpen(false);
+                              try {
+                                await window.av.sessions.setModel(session.sessionId, opt.value);
+                                setBadgeToast('모델이 다음 메시지부터 적용됩니다.');
+                              } catch {/* ignore */}
+                            }}
+                          >
+                            <span className="badge-popup-check" aria-hidden="true">
+                              {active ? '✓' : ''}
+                            </span>
+                            <span className="badge-popup-label">{opt.label}</span>
+                            <span className="badge-popup-shortcut" aria-hidden="true">{i + 1}</span>
+                          </button>
+                        );
+                      })}
+                      <div className="badge-popup-divider" role="separator" />
+                      <div className="badge-popup-title">작업량</div>
+                      {(['low','medium','high','highest','max'] as const).map((e) => {
+                        const active = effort === e;
+                        return (
+                          <button
+                            key={e}
+                            type="button"
+                            role="menuitem"
+                            className={`badge-popup-item ${active ? 'active' : ''}`}
+                            onClick={() => {
+                              setEffort(e);
+                              setModelDropdownOpen(false);
+                            }}
+                          >
+                            <span className="badge-popup-check" aria-hidden="true">
+                              {active ? '✓' : ''}
+                            </span>
+                            <span className="badge-popup-label">{EFFORT_LABELS[e]}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+              <button
+                ref={contextBtnRef}
+                type="button"
+                className="context-donut"
+                onClick={() => setContextPanelOpen((v) => !v)}
+                aria-expanded={contextPanelOpen}
+                aria-label="컨텍스트 사용량 보기"
+                title={`컨텍스트 ${formatTokens(contextUsed)} / ${formatTokens(contextWindow)} (${contextPct}%)`}
+              >
+                <ContextDonut percent={contextPct} />
+              </button>
+            </div>
+          </>
         }
       />
     </div>

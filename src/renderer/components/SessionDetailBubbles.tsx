@@ -436,20 +436,27 @@ export function renderMessages(
   messages: ConversationMessage[],
   freshIds: Set<string>,
   sessionId: string,
-  onAnswer: (text: string) => void | Promise<void>
+  onAnswer: (text: string) => void | Promise<void>,
+  onlyMine: boolean = false
 ): React.ReactNode[] {
+  // "내 메시지만 보기" — keep only user-authored text turns. Tool calls,
+  // assistant replies, and system/meta noise are filtered out entirely so
+  // the user can scan their own prompts in isolation.
+  const visible = onlyMine
+    ? messages.filter((m) => m.role === 'user' && m.kind !== 'tool_use' && m.kind !== 'tool_result')
+    : messages;
   const out: React.ReactNode[] = [];
   let i = 0;
-  while (i < messages.length) {
-    const m = messages[i];
+  while (i < visible.length) {
+    const m = visible[i];
     if (m.kind === 'tool_use' || m.kind === 'tool_result') {
       const group: ConversationMessage[] = [m];
       let j = i + 1;
       while (
-        j < messages.length &&
-        (messages[j].kind === 'tool_use' || messages[j].kind === 'tool_result')
+        j < visible.length &&
+        (visible[j].kind === 'tool_use' || visible[j].kind === 'tool_result')
       ) {
-        group.push(messages[j]);
+        group.push(visible[j]);
         j++;
       }
       const groupFresh = group.some((g) => freshIds.has(g.uuid));
