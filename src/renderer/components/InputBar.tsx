@@ -783,9 +783,7 @@ export function InputBar(props: InputBarProps) {
                 onChange={(e) => setWtEnabled(e.target.checked)}
                 disabled={!branchInfo?.isRepo}
               />
-              <span>
-                {branchInfo?.isRepo ? '새 워크트리 사용' : '새 워크트리 사용 (git 저장소 아님)'}
-              </span>
+              <span>새 워크트리 사용</span>
             </label>
             {wtEnabled && branchInfo?.isRepo && (
               <div className="control wt-base">

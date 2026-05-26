@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type React from 'react';
 import type { BgSession } from '@shared/types';
 import { formatRelative } from '../lib/format';
@@ -233,6 +233,10 @@ export function SessionList({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; session: BgSession } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  // measure 된 메뉴 크기로 viewport-flip 적용한 좌표. forMenu 참조로
+  // contextMenu 가 바뀌었을 때 stale 좌표가 적용되지 않도록 분기.
+  const [menuPos, setMenuPos] = useState<{ forMenu: typeof contextMenu; top: number; left: number } | null>(null);
   const [groupSubmenuOpen, setGroupSubmenuOpen] = useState(false);
   const [pins, setPins] = useState<Set<string>>(() => loadPins());
   const [archived, setArchived] = useState<Set<string>>(() => loadArchived());
@@ -360,6 +364,27 @@ export function SessionList({
     startRename: (s: BgSession) => void;
     onDelete: (s: BgSession) => void;
   } | null>(null);
+
+  // contextMenu 가 열리면 실제 메뉴 rect 를 측정해서 viewport 안으로
+  // 끌어들인다. 클릭 좌표 그대로 두면 화면 우/하단 가까이서 잘리는
+  // 문제(스크린샷)가 발생.
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      if (menuPos) setMenuPos(null);
+      return;
+    }
+    const el = contextMenuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const pad = 8;
+    let left = contextMenu.x;
+    let top = contextMenu.y;
+    if (left + rect.width > vw - pad) left = Math.max(pad, vw - rect.width - pad);
+    if (top + rect.height > vh - pad) top = Math.max(pad, vh - rect.height - pad);
+    setMenuPos({ forMenu: contextMenu, top, left });
+  }, [contextMenu]);
 
   // Close context menu on any outside click or Escape.
   // NOTE: We defer attaching the global close listeners by one tick. React 18
@@ -751,10 +776,18 @@ export function SessionList({
         const isPinned = pins.has(s.sessionId);
         const isArchivedRow = archived.has(s.sessionId);
         const currentGroupId = groupMembership[s.sessionId] ?? null;
+        const positioned = menuPos && menuPos.forMenu === contextMenu ? menuPos : null;
         return (
           <div
+            ref={contextMenuRef}
             className="session-list-menu"
-            style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
+            style={{
+              position: 'fixed',
+              top: positioned?.top ?? contextMenu.y,
+              left: positioned?.left ?? contextMenu.x,
+              // measure 전엔 클릭 좌표로 그려도 잘릴 수 있어 한 프레임만 숨김.
+              visibility: positioned ? 'visible' : 'hidden',
+            }}
             onClick={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => {
