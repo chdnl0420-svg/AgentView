@@ -789,13 +789,31 @@ export function SessionDetail({
       <header className="detail-head">
         <div className="title">
           <div className="title-row">
-            <span
-              className={`status-tag ${session.status}`}
-              title={statusLabel(session)}
-              aria-label={`상태: ${statusLabel(session)}`}
-            >
-              {statusLabel(session)}
-            </span>
+            {(() => {
+              // 'waiting' (claude harness 가 사용자 입력을 기다림) 일 때 막연한
+              // '입력 대기' 대신 무엇을 기다리는지 부제로 surface 한다.
+              //   - 권한 모달이 떠 있음 → "권한 응답 대기"
+              //   - AskUserQuestion 떠 있음 → "질문 응답 대기"
+              //   - 그 외 → "사용자 입력 대기"
+              const base = statusLabel(session);
+              let extra = '';
+              if (session.status === 'waiting') {
+                if (pendingPrompt) extra = '권한 응답 대기';
+                else if (pendingAsk) extra = '질문 응답 대기';
+                else extra = '사용자 입력 대기';
+              }
+              const label = extra || base;
+              const tooltip = extra ? `${base} — ${extra}` : base;
+              return (
+                <span
+                  className={`status-tag ${session.status}`}
+                  title={tooltip}
+                  aria-label={`상태: ${tooltip}`}
+                >
+                  {label}
+                </span>
+              );
+            })()}
             {editingName ? (
               <input
                 autoFocus
