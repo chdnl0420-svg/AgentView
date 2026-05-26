@@ -311,13 +311,14 @@ export function SessionListFilterMenu({
 
   return (
     <div className="sl-filter-popup-root" ref={rootRef} style={popupStyle} role="dialog" aria-label="필터 메뉴">
+      {/* Main panel — hover 만으로 submenu 가 열린다 (클릭 이벤트는 의도적으로
+          연결하지 않음, 사용자 요구). "Clear filters" 만 클릭 동작 유지. */}
       <div className="sl-filter-popup">
         <button
           type="button"
           role="menuitem"
           className={`sl-filter-row ${submenu === 'status' ? 'on' : ''}`}
           onMouseEnter={() => setSubmenu('status')}
-          onClick={() => setSubmenu(submenu === 'status' ? null : 'status')}
         >
           <span>Status</span>
           <span className={accent(null, filters.status !== DEFAULT_FILTERS.status)}>{valueLabel.status}</span>
@@ -328,7 +329,6 @@ export function SessionListFilterMenu({
           role="menuitem"
           className={`sl-filter-row ${submenu === 'project' ? 'on' : ''}`}
           onMouseEnter={() => setSubmenu('project')}
-          onClick={() => setSubmenu(submenu === 'project' ? null : 'project')}
         >
           <span>Project</span>
           <span className={accent(null, filters.project !== 'all')}>{valueLabel.project}</span>
@@ -339,7 +339,6 @@ export function SessionListFilterMenu({
           role="menuitem"
           className={`sl-filter-row ${submenu === 'environment' ? 'on' : ''}`}
           onMouseEnter={() => setSubmenu('environment')}
-          onClick={() => setSubmenu(submenu === 'environment' ? null : 'environment')}
         >
           <span>Environment</span>
           <span className={accent(null, filters.environment !== 'all')}>{valueLabel.environment}</span>
@@ -350,7 +349,6 @@ export function SessionListFilterMenu({
           role="menuitem"
           className={`sl-filter-row ${submenu === 'lastActivity' ? 'on' : ''}`}
           onMouseEnter={() => setSubmenu('lastActivity')}
-          onClick={() => setSubmenu(submenu === 'lastActivity' ? null : 'lastActivity')}
         >
           <span>Last activity</span>
           <span className={accent(null, filters.lastActivity !== DEFAULT_FILTERS.lastActivity)}>{valueLabel.lastActivity}</span>
@@ -362,7 +360,6 @@ export function SessionListFilterMenu({
           role="menuitem"
           className={`sl-filter-row ${submenu === 'groupBy' ? 'on' : ''}`}
           onMouseEnter={() => setSubmenu('groupBy')}
-          onClick={() => setSubmenu(submenu === 'groupBy' ? null : 'groupBy')}
         >
           <span>Group by</span>
           <span className="sl-filter-value">{valueLabel.groupBy}</span>
@@ -373,7 +370,6 @@ export function SessionListFilterMenu({
           role="menuitem"
           className={`sl-filter-row ${submenu === 'sortBy' ? 'on' : ''}`}
           onMouseEnter={() => setSubmenu('sortBy')}
-          onClick={() => setSubmenu(submenu === 'sortBy' ? null : 'sortBy')}
         >
           <span>Sort by</span>
           <span className="sl-filter-value">{valueLabel.sortBy}</span>
