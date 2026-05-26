@@ -3,9 +3,15 @@ import type React from 'react';
 import type { BgSession } from '@shared/types';
 import { formatRelative } from '../lib/format';
 import { loadJSON, saveJSON } from '../lib/persistence';
+import {
+  SessionListFilterMenu,
+  DEFAULT_FILTERS,
+  type FilterState
+} from './SessionListFilterMenu';
 
 const RENAMES_KEY = 'sessionRenames';
 const PINS_KEY = 'sessionPins';
+const FILTERS_KEY = 'sessionList.filters';
 
 function loadPins(): Set<string> {
   return new Set(loadJSON<string[]>(PINS_KEY, []));
@@ -51,16 +57,37 @@ interface SessionListProps {
   now: number;
 }
 
-type Filter = 'all' | 'active' | 'completed';
-type GroupKey = 'today' | 'yesterday' | 'thisWeek' | 'older';
+type TimeGroupKey = 'today' | 'yesterday' | 'thisWeek' | 'older';
 
-const GROUP_LABELS: Record<GroupKey, string> = {
+const TIME_GROUP_LABELS: Record<TimeGroupKey, string> = {
   today: '오늘',
   yesterday: '어제',
   thisWeek: '이번 주',
   older: '이전',
 };
-const GROUP_ORDER: GroupKey[] = ['today', 'yesterday', 'thisWeek', 'older'];
+const TIME_GROUP_ORDER: TimeGroupKey[] = ['today', 'yesterday', 'thisWeek', 'older'];
+
+const LAST_ACTIVITY_MS: Record<'1d' | '3d' | '7d' | '30d', number> = {
+  '1d': 86_400_000,
+  '3d': 3 * 86_400_000,
+  '7d': 7 * 86_400_000,
+  '30d': 30 * 86_400_000,
+};
+
+/** 환경 차원 매핑 — AgentView 의 backend/agent 값을 Claude Code Desktop 표기에 맞춤. */
+function envOf(s: BgSession): 'local' | 'cloud' | 'remote' {
+  const backend = s.backend ?? 'claude';
+  if (backend === 'external-claude') return 'remote';
+  // 본 앱은 cloud routine 이 없으므로 cloud 매칭은 0개. UX 일관성 위해 옵션은 노출.
+  return 'local';
+}
+
+function projectKey(s: BgSession): string {
+  const cwd = s.cwd ?? '';
+  if (!cwd) return '(미지정)';
+  const norm = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+  return norm.split('/').pop() || '(미지정)';
+}
 
 function dotClass(s: BgSession): string {
   if (!s.alive) return s.status === 'completed' ? 'completed' : s.status === 'crashed' ? 'crashed' : 'finished';
@@ -78,14 +105,6 @@ function statusLabel(s: BgSession): string {
   return '대기';
 }
 
-function isActive(s: BgSession): boolean {
-  return s.alive;
-}
-
-function isCompleted(s: BgSession): boolean {
-  return !s.alive && s.status === 'completed';
-}
-
 function matchesQuery(s: BgSession, name: string, preview: string, q: string): boolean {
   if (!q) return true;
   const lower = q.toLowerCase();
@@ -97,7 +116,7 @@ function matchesQuery(s: BgSession, name: string, preview: string, q: string): b
   );
 }
 
-function groupOf(updatedAt: number, now: number): GroupKey {
+function timeGroupOf(updatedAt: number, now: number): TimeGroupKey {
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
   const itemStart = new Date(updatedAt);
@@ -107,6 +126,36 @@ function groupOf(updatedAt: number, now: number): GroupKey {
   if (diffDays === 1) return 'yesterday';
   if (diffDays < 7) return 'thisWeek';
   return 'older';
+}
+
+function matchesFilters(s: BgSession, f: FilterState, now: number): boolean {
+  // Status
+  if (f.status === 'active' && !s.alive) return false;
+  if (f.status === 'archived' && s.alive) return false;
+  // Project
+  if (f.project !== 'all' && projectKey(s) !== f.project) return false;
+  // Environment — 'all' 외 한 옵션만 매칭. 본 앱에 cloud 없음.
+  if (f.environment !== 'all' && envOf(s) !== f.environment) return false;
+  // Last activity
+  if (f.lastActivity !== 'all') {
+    const limit = LAST_ACTIVITY_MS[f.lastActivity];
+    if (now - s.updatedAt > limit) return false;
+  }
+  return true;
+}
+
+function sortSessions(list: BgSession[], by: FilterState['sortBy'], renames: Record<string, string>): BgSession[] {
+  const out = list.slice();
+  if (by === 'recency') out.sort((a, b) => b.updatedAt - a.updatedAt);
+  else if (by === 'created') out.sort((a, b) => b.startedAt - a.startedAt);
+  else if (by === 'name') {
+    out.sort((a, b) => {
+      const an = (renames[a.sessionId] || a.name || a.agent || a.sessionId).toLowerCase();
+      const bn = (renames[b.sessionId] || b.name || b.agent || b.sessionId).toLowerCase();
+      return an.localeCompare(bn);
+    });
+  }
+  return out;
 }
 
 function saveRename(sessionId: string, name: string | null): void {
@@ -126,7 +175,13 @@ export function SessionList({
   now
 }: SessionListProps) {
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filters, setFilters] = useState<FilterState>(() =>
+    loadJSON<FilterState>(FILTERS_KEY, DEFAULT_FILTERS)
+  );
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [filterAnchor, setFilterAnchor] = useState<DOMRect | null>(null);
+  const filterTriggerRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => { saveJSON(FILTERS_KEY, filters); }, [filters]);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; session: BgSession } | null>(null);
@@ -184,49 +239,82 @@ export function SessionList({
     };
   }, [contextMenu]);
 
-  const counts = useMemo(
-    () => ({
-      all: sessions.length,
-      active: sessions.filter(isActive).length,
-      completed: sessions.filter(isCompleted).length,
-    }),
-    [sessions]
-  );
+  // Distinct project list for the filter popup. Derived from the full
+  // unfiltered session set so the project menu always shows every option.
+  const projectOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of sessions) set.add(projectKey(s));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [sessions]);
 
   const filtered = useMemo(() => {
     const list = sessions.filter((s) => {
       const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
       const preview = s.lastUserText ?? '';
       if (!matchesQuery(s, name, preview, query)) return false;
-      if (filter === 'active') return isActive(s);
-      if (filter === 'completed') return isCompleted(s);
+      if (!matchesFilters(s, filters, now)) return false;
       return true;
     });
-    return list.sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [sessions, query, filter, renames]);
+    return sortSessions(list, filters.sortBy, renames);
+  }, [sessions, query, filters, now, renames]);
 
-  // Bucket sessions: pinned ones float to a separate "고정" group at the
-  // top, regardless of how recent they are; the rest fall back into
-  // today/yesterday/thisWeek/older.
+  // Pinned ones float to a separate "고정" group at the top, regardless of
+  // grouping mode.
   const pinnedList = useMemo(
     () => filtered.filter((s) => pins.has(s.sessionId)),
     [filtered, pins]
   );
-  const grouped = useMemo(() => {
-    const map: Record<GroupKey, BgSession[]> = { today: [], yesterday: [], thisWeek: [], older: [] };
-    for (const s of filtered) {
-      if (pins.has(s.sessionId)) continue;
-      map[groupOf(s.updatedAt, now)].push(s);
-    }
-    return map;
-  }, [filtered, now, pins]);
 
-  // Flat order for keyboard navigation: pinned first, then the time buckets.
+  type Bucket = { key: string; label: string; items: BgSession[] };
+
+  const buckets = useMemo<Bucket[]>(() => {
+    const nonPinned = filtered.filter((s) => !pins.has(s.sessionId));
+    if (filters.groupBy === 'recency') {
+      const map: Record<TimeGroupKey, BgSession[]> = { today: [], yesterday: [], thisWeek: [], older: [] };
+      for (const s of nonPinned) map[timeGroupOf(s.updatedAt, now)].push(s);
+      return TIME_GROUP_ORDER
+        .filter((k) => map[k].length > 0)
+        .map((k) => ({ key: k, label: TIME_GROUP_LABELS[k], items: map[k] }));
+    }
+    if (filters.groupBy === 'project') {
+      const map = new Map<string, BgSession[]>();
+      for (const s of nonPinned) {
+        const k = projectKey(s);
+        if (!map.has(k)) map.set(k, []);
+        map.get(k)!.push(s);
+      }
+      return Array.from(map.entries())
+        .sort((a, b) => (b[1][0]?.updatedAt ?? 0) - (a[1][0]?.updatedAt ?? 0))
+        .map(([k, items]) => ({ key: `proj-${k}`, label: k, items }));
+    }
+    if (filters.groupBy === 'environment') {
+      const map = new Map<string, BgSession[]>();
+      for (const s of nonPinned) {
+        const k = envOf(s);
+        if (!map.has(k)) map.set(k, []);
+        map.get(k)!.push(s);
+      }
+      const ORDER: Record<string, number> = { local: 0, cloud: 1, remote: 2 };
+      return Array.from(map.entries())
+        .sort((a, b) => (ORDER[a[0]] ?? 9) - (ORDER[b[0]] ?? 9))
+        .map(([k, items]) => ({ key: `env-${k}`, label: k === 'local' ? 'Local' : k === 'cloud' ? 'Cloud' : 'Remote Control', items }));
+    }
+    // 'status' grouping
+    const active: BgSession[] = [];
+    const archived: BgSession[] = [];
+    for (const s of nonPinned) (s.alive ? active : archived).push(s);
+    return [
+      active.length ? { key: 'st-active', label: 'Active', items: active } : null,
+      archived.length ? { key: 'st-archived', label: 'Archived', items: archived } : null
+    ].filter(Boolean) as Bucket[];
+  }, [filtered, pins, filters.groupBy, now]);
+
+  // Flat order for keyboard navigation: pinned first, then bucket order.
   const flatOrder = useMemo(() => {
     const out: BgSession[] = [...pinnedList];
-    for (const k of GROUP_ORDER) out.push(...grouped[k]);
+    for (const b of buckets) out.push(...b.items);
     return out;
-  }, [grouped, pinnedList]);
+  }, [buckets, pinnedList]);
 
   const commitRename = useCallback(
     (sessionId: string) => {
@@ -293,10 +381,16 @@ export function SessionList({
     [flatOrder, renamingId, onSelect, selectedId]
   );
 
+  const filtersActive =
+    filters.status !== DEFAULT_FILTERS.status ||
+    filters.project !== DEFAULT_FILTERS.project ||
+    filters.environment !== DEFAULT_FILTERS.environment ||
+    filters.lastActivity !== DEFAULT_FILTERS.lastActivity;
+
   const emptyText =
-    query || filter !== 'all'
+    query || filtersActive
       ? '일치하는 세션 없음'
-      : '세션 없음 — 위 “+ 새 작업”으로 시작하세요';
+      : '세션 없음 — 위 "+ 새 작업"으로 시작하세요';
 
   const renderRow = (s: BgSession): React.ReactElement => {
     const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
@@ -370,6 +464,31 @@ export function SessionList({
         <button type="button" className="btn primary session-list-new" onClick={onNewClick}>
           ＋ 새 작업
         </button>
+        <button
+          ref={filterTriggerRef}
+          type="button"
+          className={`session-list-filter-trigger ${filtersActive ? 'has-active' : ''}`}
+          onClick={() => {
+            const rect = filterTriggerRef.current?.getBoundingClientRect() ?? null;
+            setFilterAnchor(rect);
+            setFilterMenuOpen((v) => !v);
+          }}
+          aria-haspopup="menu"
+          aria-expanded={filterMenuOpen}
+          title="필터 메뉴"
+          aria-label="세션 필터 메뉴"
+        >
+          {/* Filter / sliders icon (3 horizontal sliders) */}
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M2 3.5h7.5v1H2v-1zm10.5 0H14v1h-1.5v-1zM2 7.5h2.5v1H2v-1zm5.5 0H14v1H7.5v-1zM2 11.5h7.5v1H2v-1zm10.5 0H14v1h-1.5v-1z"
+            />
+            <circle cx="10.5" cy="4" r="1.5" fill="currentColor" />
+            <circle cx="5.5" cy="8" r="1.5" fill="currentColor" />
+            <circle cx="10.5" cy="12" r="1.5" fill="currentColor" />
+          </svg>
+        </button>
       </div>
       <div className="session-list-search-row">
         <span className="session-list-search-icon" aria-hidden="true">⌕</span>
@@ -400,32 +519,9 @@ export function SessionList({
           </button>
         )}
       </div>
-      <div className="session-list-filters" role="tablist">
-        <button
-          type="button"
-          className={`session-list-filter ${filter === 'all' ? 'active' : ''}`}
-          onClick={() => setFilter('all')}
-          aria-pressed={filter === 'all'}
-        >
-          모두 <span className="session-list-filter-count">{counts.all}</span>
-        </button>
-        <button
-          type="button"
-          className={`session-list-filter ${filter === 'active' ? 'active' : ''}`}
-          onClick={() => setFilter('active')}
-          aria-pressed={filter === 'active'}
-        >
-          실행 중 <span className="session-list-filter-count">{counts.active}</span>
-        </button>
-        <button
-          type="button"
-          className={`session-list-filter ${filter === 'completed' ? 'active' : ''}`}
-          onClick={() => setFilter('completed')}
-          aria-pressed={filter === 'completed'}
-        >
-          완료 <span className="session-list-filter-count">{counts.completed}</span>
-        </button>
-      </div>
+      {/* Filter chip row removed — replaced by the SessionListFilterMenu
+          popup triggered from the head slider icon (Claude Code Desktop
+          2026.04 sidebar pattern). */}
       <div className="session-list-body">
         {flatOrder.length === 0 && (
           <div className="session-list-empty">{emptyText}</div>
@@ -436,17 +532,21 @@ export function SessionList({
             {pinnedList.map((s) => renderRow(s))}
           </div>
         )}
-        {GROUP_ORDER.map((g) => {
-          const items = grouped[g];
-          if (items.length === 0) return null;
-          return (
-            <div key={g} className="session-list-group">
-              <div className="session-list-group-header">{GROUP_LABELS[g]}</div>
-              {items.map((s) => renderRow(s))}
-            </div>
-          );
-        })}
+        {buckets.map((b) => (
+          <div key={b.key} className="session-list-group">
+            <div className="session-list-group-header">{b.label}</div>
+            {b.items.map((s) => renderRow(s))}
+          </div>
+        ))}
       </div>
+      <SessionListFilterMenu
+        open={filterMenuOpen}
+        filters={filters}
+        projectOptions={projectOptions}
+        anchor={filterAnchor}
+        onChange={setFilters}
+        onClose={() => setFilterMenuOpen(false)}
+      />
       {contextMenu && (
         <div
           className="session-list-menu"

@@ -82,40 +82,135 @@
 }
 .session-list-search-clear:hover { color: var(--text-primary); background: var(--bg-elev-4, #2b2f3a); }
 
-.session-list-filters {
-  display: flex;
-  gap: 4px;
-  padding: 4px 12px 8px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.session-list-filter {
+/* Filter trigger button — small slider icon next to "+ 새 작업".
+   Claude Code Desktop 2026.04 sidebar pattern: clicking opens a
+   cascading popup with Status / Project / Environment / Last activity /
+   Group by / Sort by / Clear filters. */
+.session-list-filter-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 9px;
-  border-radius: 999px;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
   background: transparent;
   border: 1px solid var(--border);
+  border-radius: 6px;
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 500;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.session-list-filter:hover {
+.session-list-filter-trigger:hover {
   background: var(--bg-elev-2);
   color: var(--text-primary);
+  border-color: var(--border-strong);
 }
-.session-list-filter.active {
-  background: var(--accent-soft);
+.session-list-filter-trigger.has-active {
+  color: var(--accent);
   border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Cascading filter popup */
+.sl-filter-popup-root {
+  z-index: 2200;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.sl-filter-popup {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 4px;
+  min-width: 220px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.sl-filter-submenu-wrapper {
+  display: flex;
+  align-items: flex-start;
+}
+.sl-filter-submenu {
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 4px;
+  min-width: 200px;
+  max-height: 60vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+}
+.sl-filter-submenu-scroll {
+  max-height: 50vh;
+}
+.sl-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  width: 100%;
+}
+.sl-filter-row:hover,
+.sl-filter-row.on {
+  background: var(--bg-elev-3, #21263a);
+}
+.sl-filter-row > :first-child {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sl-filter-row-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sl-filter-value {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.sl-filter-value.accent {
+  color: var(--accent);
+  font-weight: 500;
+}
+.sl-filter-caret {
+  color: var(--text-muted);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.sl-filter-row.checked {
   color: var(--text-primary);
 }
-.session-list-filter-count {
-  font-size: 10px;
-  font-weight: 400;
-  opacity: 0.75;
+.sl-filter-check {
+  color: var(--accent);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.sl-filter-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+.sl-filter-clear {
+  color: var(--text-secondary);
+}
+.sl-filter-clear:hover {
+  color: var(--text-primary);
 }
 
 .session-list-body {
