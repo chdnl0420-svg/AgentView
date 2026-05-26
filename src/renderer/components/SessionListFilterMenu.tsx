@@ -137,34 +137,20 @@ export function SessionListFilterMenu({
       }
     : { position: 'fixed', top: 60, left: 12 };
 
-  const setStatus = (v: StatusValue) => {
-    onChange({ ...filters, status: v });
+  // submenu 의 값 선택 시 popup 전체를 닫는다 — 사용자 요구. 한 번의
+  // 선택 → 사이드바 즉시 확인이 자연스러운 흐름.
+  const pickValue = (next: FilterState) => {
+    onChange(next);
     setSubmenu(null);
+    onClose();
   };
-  const setProject = (v: string) => {
-    onChange({ ...filters, project: v });
-    setSubmenu(null);
-  };
-  const setEnvironment = (v: EnvironmentValue) => {
-    onChange({ ...filters, environment: v });
-    setSubmenu(null);
-  };
-  const setLastActivity = (v: LastActivityValue) => {
-    onChange({ ...filters, lastActivity: v });
-    setSubmenu(null);
-  };
-  const setGroupBy = (v: GroupByValue) => {
-    onChange({ ...filters, groupBy: v });
-    setSubmenu(null);
-  };
-  const setSortBy = (v: SortByValue) => {
-    onChange({ ...filters, sortBy: v });
-    setSubmenu(null);
-  };
-  const clearAll = () => {
-    onChange({ ...DEFAULT_FILTERS });
-    setSubmenu(null);
-  };
+  const setStatus = (v: StatusValue) => pickValue({ ...filters, status: v });
+  const setProject = (v: string) => pickValue({ ...filters, project: v });
+  const setEnvironment = (v: EnvironmentValue) => pickValue({ ...filters, environment: v });
+  const setLastActivity = (v: LastActivityValue) => pickValue({ ...filters, lastActivity: v });
+  const setGroupBy = (v: GroupByValue) => pickValue({ ...filters, groupBy: v });
+  const setSortBy = (v: SortByValue) => pickValue({ ...filters, sortBy: v });
+  const clearAll = () => pickValue({ ...DEFAULT_FILTERS });
 
   const renderSubmenu = () => {
     if (!submenu) return null;
