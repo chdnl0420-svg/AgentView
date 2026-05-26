@@ -94,17 +94,6 @@ function dotClass(s: BgSession): string {
   return s.status === 'running' ? 'running' : 'waiting';
 }
 
-function statusLabel(s: BgSession): string {
-  if (!s.alive) {
-    if (s.status === 'crashed') return '오류';
-    if (s.status === 'completed') return '완료';
-    return '종료';
-  }
-  if (s.status === 'running') return '실행 중';
-  if (s.status === 'waiting') return '대기';
-  return '대기';
-}
-
 function matchesQuery(s: BgSession, name: string, preview: string, q: string): boolean {
   if (!q) return true;
   const lower = q.toLowerCase();
@@ -445,10 +434,11 @@ export function SessionList({
             </span>
           )}
           <span className="session-list-sub">
-            <span className={`session-list-status ${dotClass(s)}`}>{statusLabel(s)}</span>
+            {/* 상태 텍스트 ("실행 중"/"완료"/"대기"/...) 제거 — 색상 dot
+                만으로 표현 (Claude Code Desktop 사이드바 패턴). */}
             {previewSlice && (
               <span className="session-list-preview" title={preview}>
-                · {highlightMatch(previewSlice, query)}
+                {highlightMatch(previewSlice, query)}
               </span>
             )}
             <span className="session-list-time">{formatRelative(s.updatedAt, now)}</span>
