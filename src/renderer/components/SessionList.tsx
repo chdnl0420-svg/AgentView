@@ -13,6 +13,14 @@ const RENAMES_KEY = 'sessionRenames';
 const PINS_KEY = 'sessionPins';
 const FILTERS_KEY = 'sessionList.filters';
 const COLLAPSED_GROUPS_KEY = 'sessionList.collapsedGroups';
+const ARCHIVED_KEY = 'sessionArchived';
+const GROUPS_KEY = 'sessionGroups';
+const GROUP_MEMBERSHIP_KEY = 'sessionGroupMembership';
+
+interface UserGroup {
+  id: string;
+  name: string;
+}
 
 function loadPins(): Set<string> {
   return new Set(loadJSON<string[]>(PINS_KEY, []));
@@ -21,6 +29,33 @@ function loadPins(): Set<string> {
 function savePins(pins: Set<string>): void {
   saveJSON(PINS_KEY, Array.from(pins));
   window.dispatchEvent(new CustomEvent('agentview:pins-changed'));
+}
+
+function loadArchived(): Set<string> {
+  return new Set(loadJSON<string[]>(ARCHIVED_KEY, []));
+}
+
+function saveArchived(archived: Set<string>): void {
+  saveJSON(ARCHIVED_KEY, Array.from(archived));
+  window.dispatchEvent(new CustomEvent('agentview:archived-changed'));
+}
+
+function loadGroups(): UserGroup[] {
+  return loadJSON<UserGroup[]>(GROUPS_KEY, []);
+}
+
+function saveGroups(groups: UserGroup[]): void {
+  saveJSON(GROUPS_KEY, groups);
+  window.dispatchEvent(new CustomEvent('agentview:groups-changed'));
+}
+
+function loadGroupMembership(): Record<string, string> {
+  return loadJSON<Record<string, string>>(GROUP_MEMBERSHIP_KEY, {});
+}
+
+function saveGroupMembership(map: Record<string, string>): void {
+  saveJSON(GROUP_MEMBERSHIP_KEY, map);
+  window.dispatchEvent(new CustomEvent('agentview:group-membership-changed'));
 }
 
 // Highlight matches of `query` inside `text` by wrapping them with
@@ -118,10 +153,20 @@ function timeGroupOf(updatedAt: number, now: number): TimeGroupKey {
   return 'older';
 }
 
-function matchesFilters(s: BgSession, f: FilterState, now: number): boolean {
-  // Status
-  if (f.status === 'active' && !s.alive) return false;
-  if (f.status === 'archived' && s.alive) return false;
+// `archived` 는 호출부에서 항상 전달돼야 정확한 status 분류가 되지만, 누락 시
+// 함수 전체가 undefined.has() 로 폭발하는 사고가 한 번 있었기 때문에 default
+// 빈 Set 으로 방어한다. 빈 Set 일 때는 명시적으로 보관 처리된 세션 0개로 간주.
+function matchesFilters(
+  s: BgSession,
+  f: FilterState,
+  now: number,
+  archived: Set<string> = new Set()
+): boolean {
+  const isArchived = archived.has(s.sessionId);
+  // Status — 'archived' 는 사용자가 명시적으로 보관 처리한 세션 OR 종료된 세션.
+  // 'active' 는 alive 이면서 사용자가 보관하지 않은 세션.
+  if (f.status === 'active' && (isArchived || !s.alive)) return false;
+  if (f.status === 'archived' && !isArchived && s.alive) return false;
   // Project
   if (f.project !== 'all' && projectKey(s) !== f.project) return false;
   // Environment — 'all' 외 한 옵션만 매칭. 본 앱에 cloud 없음.
@@ -188,7 +233,11 @@ export function SessionList({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; session: BgSession } | null>(null);
+  const [groupSubmenuOpen, setGroupSubmenuOpen] = useState(false);
   const [pins, setPins] = useState<Set<string>>(() => loadPins());
+  const [archived, setArchived] = useState<Set<string>>(() => loadArchived());
+  const [groups, setGroups] = useState<UserGroup[]>(() => loadGroups());
+  const [groupMembership, setGroupMembership] = useState<Record<string, string>>(() => loadGroupMembership());
   const searchRef = useRef<HTMLInputElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -196,9 +245,20 @@ export function SessionList({
   // toggle a pin — keep our local copy in sync so the "고정" group stays
   // accurate without a manual remount.
   useEffect(() => {
-    const onChange = () => setPins(loadPins());
-    window.addEventListener('agentview:pins-changed', onChange);
-    return () => window.removeEventListener('agentview:pins-changed', onChange);
+    const onPins = () => setPins(loadPins());
+    const onArchived = () => setArchived(loadArchived());
+    const onGroups = () => setGroups(loadGroups());
+    const onMembership = () => setGroupMembership(loadGroupMembership());
+    window.addEventListener('agentview:pins-changed', onPins);
+    window.addEventListener('agentview:archived-changed', onArchived);
+    window.addEventListener('agentview:groups-changed', onGroups);
+    window.addEventListener('agentview:group-membership-changed', onMembership);
+    return () => {
+      window.removeEventListener('agentview:pins-changed', onPins);
+      window.removeEventListener('agentview:archived-changed', onArchived);
+      window.removeEventListener('agentview:groups-changed', onGroups);
+      window.removeEventListener('agentview:group-membership-changed', onMembership);
+    };
   }, []);
 
   const togglePin = useCallback((sessionId: string) => {
@@ -211,6 +271,45 @@ export function SessionList({
     });
     setContextMenu(null);
   }, []);
+
+  const toggleArchive = useCallback((sessionId: string) => {
+    setArchived((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      saveArchived(next);
+      return next;
+    });
+    setContextMenu(null);
+  }, []);
+
+  const assignGroup = useCallback((sessionId: string, groupId: string | null) => {
+    setGroupMembership((prev) => {
+      const next = { ...prev };
+      if (groupId) next[sessionId] = groupId;
+      else delete next[sessionId];
+      saveGroupMembership(next);
+      return next;
+    });
+    setGroupSubmenuOpen(false);
+    setContextMenu(null);
+  }, []);
+
+  const createGroupAndAssign = useCallback((sessionId: string) => {
+    const name = window.prompt('새 그룹 이름');
+    const trimmed = (name ?? '').trim();
+    if (!trimmed) return;
+    const newGroup: UserGroup = {
+      id: `g-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      name: trimmed
+    };
+    setGroups((prev) => {
+      const next = [...prev, newGroup];
+      saveGroups(next);
+      return next;
+    });
+    assignGroup(sessionId, newGroup.id);
+  }, [assignGroup]);
 
   // Ctrl/Cmd+K anywhere → focus session search.
   useEffect(() => {
@@ -225,12 +324,45 @@ export function SessionList({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // contextMenu 의 키보드 단축키 (P/R/A/D) 가 참조해야 하는 핸들러는
+  // 함수 본문 하단에 정의된다. TDZ 회피용 ref — 매 render 마다 최신
+  // 함수로 갱신해두고, useEffect 안에서는 ref.current 만 호출한다.
+  const menuActionsRef = useRef<{
+    togglePin: (id: string) => void;
+    toggleArchive: (id: string) => void;
+    startRename: (s: BgSession) => void;
+    onDelete: (s: BgSession) => void;
+  } | null>(null);
+
   // Close context menu on any outside click or Escape.
   useEffect(() => {
     if (!contextMenu) return;
-    const close = () => setContextMenu(null);
+    const close = () => {
+      setContextMenu(null);
+      setGroupSubmenuOpen(false);
+    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+      if (e.key === 'Escape') {
+        close();
+        return;
+      }
+      const actions = menuActionsRef.current;
+      if (!actions) return;
+      const s = contextMenu.session;
+      const k = e.key.toLowerCase();
+      if (k === 'p') {
+        e.preventDefault();
+        actions.togglePin(s.sessionId);
+      } else if (k === 'r') {
+        e.preventDefault();
+        actions.startRename(s);
+      } else if (k === 'a') {
+        e.preventDefault();
+        actions.toggleArchive(s.sessionId);
+      } else if (k === 'd') {
+        e.preventDefault();
+        actions.onDelete(s);
+      }
     };
     window.addEventListener('mousedown', close);
     window.addEventListener('contextmenu', close);
@@ -255,11 +387,11 @@ export function SessionList({
       const name = renames[s.sessionId] || s.name || s.agent || '이름 없음';
       const preview = s.lastUserText ?? '';
       if (!matchesQuery(s, name, preview, query)) return false;
-      if (!matchesFilters(s, filters, now)) return false;
+      if (!matchesFilters(s, filters, now, archived)) return false;
       return true;
     });
     return sortSessions(list, filters.sortBy, renames);
-  }, [sessions, query, filters, now, renames]);
+  }, [sessions, query, filters, now, renames, archived]);
 
   // Pinned ones float to a separate "고정" group at the top, regardless of
   // grouping mode.
@@ -303,12 +435,12 @@ export function SessionList({
         .map(([k, items]) => ({ key: `env-${k}`, label: k === 'local' ? 'Local' : k === 'cloud' ? 'Cloud' : 'Remote Control', items }));
     }
     // 'status' grouping
-    const active: BgSession[] = [];
-    const archived: BgSession[] = [];
-    for (const s of nonPinned) (s.alive ? active : archived).push(s);
+    const activeItems: BgSession[] = [];
+    const archivedItems: BgSession[] = [];
+    for (const s of nonPinned) (s.alive ? activeItems : archivedItems).push(s);
     return [
-      active.length ? { key: 'st-active', label: 'Active', items: active } : null,
-      archived.length ? { key: 'st-archived', label: 'Archived', items: archived } : null
+      activeItems.length ? { key: 'st-active', label: 'Active', items: activeItems } : null,
+      archivedItems.length ? { key: 'st-archived', label: 'Archived', items: archivedItems } : null
     ].filter(Boolean) as Bucket[];
   }, [filtered, pins, filters.groupBy, now]);
 
@@ -365,6 +497,10 @@ export function SessionList({
     setContextMenu(null);
     navigator.clipboard.writeText(s.sessionId).catch(() => undefined);
   }, []);
+
+  // 매 render 마다 최신 콜백을 ref 에 적재 — 위쪽 contextMenu useEffect 가
+  // TDZ 없이 호출할 수 있게 한다.
+  menuActionsRef.current = { togglePin, toggleArchive, startRename, onDelete };
 
   // Keyboard ↑/↓/Enter while the list has focus.
   const onListKeyDown = useCallback(
@@ -567,60 +703,124 @@ export function SessionList({
         filters={filters}
         projectOptions={projectOptions}
         anchor={filterAnchor}
+        triggerRef={filterTriggerRef}
         onChange={setFilters}
         onClose={() => setFilterMenuOpen(false)}
       />
-      {contextMenu && (
-        <div
-          className="session-list-menu"
-          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-          role="menu"
-        >
-          <button
-            type="button"
-            className="session-list-menu-item"
-            onClick={() => togglePin(contextMenu.session.sessionId)}
+      {contextMenu && (() => {
+        const s = contextMenu.session;
+        const isPinned = pins.has(s.sessionId);
+        const isArchivedRow = archived.has(s.sessionId);
+        const currentGroupId = groupMembership[s.sessionId] ?? null;
+        return (
+          <div
+            className="session-list-menu"
+            style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            role="menu"
           >
-            {pins.has(contextMenu.session.sessionId) ? '☆ 고정 해제' : '★ 상단 고정'}
-          </button>
-          <button
-            type="button"
-            className="session-list-menu-item"
-            onClick={() => startRename(contextMenu.session)}
-          >
-            ✎ 이름 변경
-          </button>
-          <button
-            type="button"
-            className="session-list-menu-item"
-            onClick={() => onOpenFolder(contextMenu.session)}
-            disabled={!contextMenu.session.cwd}
-          >
-            📁 폴더 열기
-          </button>
-          <button
-            type="button"
-            className="session-list-menu-item"
-            onClick={() => onCopyId(contextMenu.session)}
-          >
-            ⧉ 세션 ID 복사
-          </button>
-          <div className="session-list-menu-sep" />
-          <button
-            type="button"
-            className="session-list-menu-item danger"
-            onClick={() => onDelete(contextMenu.session)}
-          >
-            🗑 삭제
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              className="session-list-menu-item"
+              onClick={() => onOpenFolder(s)}
+              disabled={!s.cwd}
+            >
+              <span className="session-list-menu-label">다음에서 열기</span>
+              <span className="session-list-menu-caret">›</span>
+            </button>
+            <button
+              type="button"
+              className="session-list-menu-item"
+              onClick={() => togglePin(s.sessionId)}
+            >
+              <span className="session-list-menu-label">{isPinned ? '고정 해제' : '고정'}</span>
+              <span className="session-list-menu-kbd">P</span>
+            </button>
+            <button
+              type="button"
+              className="session-list-menu-item"
+              onClick={() => onCopyId(s)}
+              title="세션 ID 복사"
+            >
+              <span className="session-list-menu-label">세션 ID 복사</span>
+              <span className="session-list-menu-kbd">U</span>
+            </button>
+            <button
+              type="button"
+              className="session-list-menu-item"
+              onClick={() => startRename(s)}
+            >
+              <span className="session-list-menu-label">이름 변경</span>
+              <span className="session-list-menu-kbd">R</span>
+            </button>
+            <button
+              type="button"
+              className="session-list-menu-item"
+              onMouseEnter={() => setGroupSubmenuOpen(true)}
+              onClick={() => setGroupSubmenuOpen((v) => !v)}
+            >
+              <span className="session-list-menu-label">그룹으로 이동</span>
+              <span className="session-list-menu-caret">›</span>
+              {groupSubmenuOpen && (
+                <div
+                  className="session-list-menu session-list-menu-submenu"
+                  role="menu"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  {groups.length === 0 && (
+                    <div className="session-list-menu-empty">그룹 없음</div>
+                  )}
+                  {groups.map((g, idx) => {
+                    const checked = currentGroupId === g.id;
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        className={`session-list-menu-item ${checked ? 'checked' : ''}`}
+                        onClick={() => assignGroup(s.sessionId, checked ? null : g.id)}
+                        title={g.name}
+                      >
+                        <span className="session-list-menu-label">{g.name}</span>
+                        <span className="session-list-menu-kbd">{idx + 1}</span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="session-list-menu-item"
+                    onClick={() => createGroupAndAssign(s.sessionId)}
+                  >
+                    <span className="session-list-menu-label">새 그룹…</span>
+                    <span className="session-list-menu-kbd">{groups.length + 1}</span>
+                  </button>
+                </div>
+              )}
+            </button>
+            <button
+              type="button"
+              className="session-list-menu-item"
+              onClick={() => toggleArchive(s.sessionId)}
+            >
+              <span className="session-list-menu-label">{isArchivedRow ? '보관 해제' : '보관'}</span>
+              <span className="session-list-menu-kbd">A</span>
+            </button>
+            <button
+              type="button"
+              className="session-list-menu-item danger"
+              onClick={() => onDelete(s)}
+            >
+              <span className="session-list-menu-label">삭제</span>
+              <span className="session-list-menu-kbd">D</span>
+            </button>
+          </div>
+        );
+      })()}
     </div>
   );
 }

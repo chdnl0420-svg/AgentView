@@ -72,6 +72,13 @@ interface SessionListFilterMenuProps {
   onClose: () => void;
   /** Anchor element rect used to position the popup relative to the trigger. */
   anchor: DOMRect | null;
+  /**
+   * Trigger button ref — used by the outside-click handler so that clicking
+   * the trigger again counts as "inside" and lets the trigger's own onClick
+   * toggle the popup closed. Without this, mousedown closes the popup before
+   * click can re-open it → the popup never actually toggles off.
+   */
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
 /**
@@ -85,7 +92,8 @@ export function SessionListFilterMenu({
   projectOptions,
   onChange,
   onClose,
-  anchor
+  anchor,
+  triggerRef
 }: SessionListFilterMenuProps) {
   const [submenu, setSubmenu] = useState<SubmenuId>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -115,7 +123,14 @@ export function SessionListFilterMenu({
     };
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) onClose();
+      const target = e.target as Node;
+      if (rootRef.current.contains(target)) return;
+      // Clicking the trigger again must not be treated as "outside" — otherwise
+      // mousedown closes the popup and the trigger's click then re-opens it,
+      // so the popup never toggles off.
+      const trigger = triggerRef?.current;
+      if (trigger && trigger.contains(target)) return;
+      onClose();
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('mousedown', onDown);
@@ -123,7 +138,7 @@ export function SessionListFilterMenu({
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('mousedown', onDown);
     };
-  }, [open, onClose]);
+  }, [open, onClose, triggerRef]);
 
   if (!open) return null;
 

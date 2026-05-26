@@ -157,12 +157,25 @@ export interface AgentViewApi {
     } | null>;
   };
   commands: {
-    list(): Promise<SlashCommandEntry[]>;
+    /**
+     * Lists builtin + user (`~/.claude/commands`) + project (`<cwd>/.claude/commands`)
+     * slash commands. Pass the *session's* cwd — passing nothing falls back
+     * to `process.cwd()` which in a packaged build is the install dir, not
+     * the user's project, so project-scoped commands silently vanish.
+     */
+    list(cwd?: string | null): Promise<SlashCommandEntry[]>;
   };
   picker: {
     directory(defaultPath?: string): Promise<string | null>;
     files(defaultPath?: string): Promise<string[]>;
     savePastedImage(buffer: ArrayBuffer, ext: string): Promise<string | null>;
+    /**
+     * Returns the absolute filesystem path for a renderer-side File object.
+     * Required since Electron 32 (which dropped File.path). Returns ''
+     * when the File originated outside the OS file system (e.g. a generated
+     * blob).
+     */
+    pathForFile(file: File): string;
   };
   git: {
     branches(cwd: string): Promise<GitBranchesResult>;

@@ -7,10 +7,17 @@ import { listBuiltinCommands } from '../builtinCommands';
 import { parseAgentFile } from '../frontmatter';
 import type { AgentInfo, SlashCommandEntry } from '@shared/types';
 
-export async function loadCommands(): Promise<SlashCommandEntry[]> {
+export async function loadCommands(sessionCwd?: string | null): Promise<SlashCommandEntry[]> {
+  // Project-scoped commands live under <cwd>/.claude/commands. In a packaged
+  // electron build `process.cwd()` is the install dir (e.g. Program Files),
+  // not the user's project — so we honor an explicit cwd from the renderer
+  // and only fall back to process.cwd() in dev when the caller didn't supply
+  // one. This mirrors what Claude Code Desktop does (it scans the project
+  // root that's currently open in the sidebar).
+  const projectRoot = sessionCwd && sessionCwd.trim() ? sessionCwd : process.cwd();
   const dirs = [
     { p: join(homedir(), '.claude', 'commands'), scope: 'user' as const },
-    { p: join(process.cwd(), '.claude', 'commands'), scope: 'project' as const }
+    { p: join(projectRoot, '.claude', 'commands'), scope: 'project' as const }
   ];
   const out: SlashCommandEntry[] = [];
   const seen = new Set<string>();
@@ -98,5 +105,7 @@ export async function loadAgents(): Promise<AgentInfo[]> {
 
 export function registerLoaders(): void {
   ipcMain.handle(IPC.AgentsList, async () => loadAgents());
-  ipcMain.handle(IPC.CommandsList, async () => loadCommands());
+  ipcMain.handle(IPC.CommandsList, async (_e, cwd?: string | null) =>
+    loadCommands(cwd ?? null)
+  );
 }

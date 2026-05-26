@@ -291,15 +291,20 @@ export function InputBar(props: InputBarProps) {
     };
   }, []);
 
+  // Reload slash commands whenever the working directory changes. Project-
+  // scoped commands live under `<cwd>/.claude/commands`, so without this
+  // re-fetch the popup would only ever show user-level + builtin entries
+  // (or worse, the install-dir's project commands in a packaged build).
   useEffect(() => {
     let cancelled = false;
-    window.av.commands.list().then((list) => {
+    const targetCwd = cwd || (isNew ? props.defaultCwd : props.fixedCwd);
+    window.av.commands.list(targetCwd || null).then((list) => {
       if (!cancelled) setCommands(list);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [cwd, isNew, isNew ? props.defaultCwd : props.fixedCwd]);
 
   // Track whether the user has explicitly picked a model in this session.
   // Once they have, we never overwrite their choice with the session's
@@ -336,8 +341,12 @@ export function InputBar(props: InputBarProps) {
       const arr: Array<File & { path?: string }> = Array.from(files) as Array<File & { path?: string }>;
       const newPaths: string[] = [];
       for (const f of arr) {
-        if (f.path && f.path.trim()) {
-          newPaths.push(f.path);
+        // Electron 32 removed File.path → fall back to webUtils via preload.
+        // Keep the f.path read first because dev builds on older Electron still
+        // populate it and we want to avoid an unnecessary preload round-trip.
+        const direct = (f.path && f.path.trim()) || window.av.picker.pathForFile(f);
+        if (direct) {
+          newPaths.push(direct);
         } else if (f.type.startsWith('image/')) {
           const buf = await f.arrayBuffer();
           const ext = (f.type.split('/')[1] || 'png').toLowerCase().split(';')[0];
@@ -409,8 +418,9 @@ export function InputBar(props: InputBarProps) {
     const newPaths: string[] = [];
 
     for (const f of explorerFiles) {
-      if (f.path && f.path.trim()) {
-        newPaths.push(f.path);
+      const direct = (f.path && f.path.trim()) || window.av.picker.pathForFile(f);
+      if (direct) {
+        newPaths.push(direct);
       } else if (f.type.startsWith('image/')) {
         const buf = await f.arrayBuffer();
         const ext = (f.type.split('/')[1] || 'png').toLowerCase().split(';')[0];
@@ -421,9 +431,9 @@ export function InputBar(props: InputBarProps) {
     for (const item of imageItems) {
       const file = item.getAsFile() as (File & { path?: string }) | null;
       if (!file) continue;
-      if (file.path && newPaths.includes(file.path)) continue;
-      if (file.path && file.path.trim()) {
-        if (!newPaths.includes(file.path)) newPaths.push(file.path);
+      const direct = (file.path && file.path.trim()) || window.av.picker.pathForFile(file);
+      if (direct) {
+        if (!newPaths.includes(direct)) newPaths.push(direct);
         continue;
       }
       const buf = await file.arrayBuffer();

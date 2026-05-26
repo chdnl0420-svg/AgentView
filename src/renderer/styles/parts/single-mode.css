@@ -410,6 +410,56 @@
   margin: 4px 6px;
 }
 
+/* Menu item layout: label fills, kbd/caret pinned right.
+   contextMenu submenu (그룹으로 이동) hangs off the parent row. */
+.session-list-menu-item {
+  position: relative;
+  justify-content: space-between;
+}
+.session-list-menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-list-menu-kbd {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  opacity: 0.85;
+}
+.session-list-menu-caret {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+.session-list-menu-item.checked {
+  background: var(--accent-soft, rgba(110, 168, 255, 0.16));
+}
+.session-list-menu-item.checked::before {
+  content: '✓';
+  position: absolute;
+  left: -4px;
+  color: var(--accent, #6ea8ff);
+  font-size: 11px;
+}
+.session-list-menu-empty {
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.session-list-menu-submenu {
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  margin-left: 4px;
+  min-width: 160px;
+  z-index: 1001;
+}
+
 .session-list-item:hover {
   background: var(--bg-elev-2);
   color: var(--text-primary);
